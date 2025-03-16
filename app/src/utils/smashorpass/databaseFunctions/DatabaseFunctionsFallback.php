@@ -17,7 +17,7 @@ class DatabaseFunctionsFallback {
         $results = [
             [
                 'id' => 'demo-1',
-                'name' => 'Performer A',
+                'name' => 'Female Performer A',
                 'gender' => 'female',
                 'ethnicity' => 'Caucasian',
                 'height' => '170 cm',
@@ -25,7 +25,7 @@ class DatabaseFunctionsFallback {
             ],
             [
                 'id' => 'demo-2',
-                'name' => 'Performer B',
+                'name' => 'Female Performer B',
                 'gender' => 'female',
                 'ethnicity' => 'Caucasian',
                 'height' => '175 cm',
@@ -33,25 +33,78 @@ class DatabaseFunctionsFallback {
             ],
             [
                 'id' => 'demo-3',
-                'name' => 'Performer C',
+                'name' => 'Male Performer A',
                 'gender' => 'male',
                 'ethnicity' => 'Caucasian',
                 'height' => '185 cm',
                 'images' => ['/assets/images/placeholder-profile.jpg']
+            ],
+            [
+                'id' => 'demo-4',
+                'name' => 'Male Performer B',
+                'gender' => 'male',
+                'ethnicity' => 'African',
+                'height' => '180 cm',
+                'images' => ['/assets/images/placeholder-profile.jpg']
+            ],
+            [
+                'id' => 'demo-5',
+                'name' => 'Trans Performer',
+                'gender' => 'transgender',
+                'ethnicity' => 'Asian',
+                'height' => '172 cm',
+                'images' => ['/assets/images/placeholder-profile.jpg']
             ]
         ];
         
-        // Filter by gender if specified
-        if ($gender) {
-            $results = array_filter($results, function($performer) use ($gender) {
-                return $performer['gender'] === $gender;
+        // Normalize gender for case-insensitive comparison
+        $normalizedGender = $gender ? strtolower(trim($gender)) : null;
+        
+        // Debug log the requested gender
+        error_log("getRandomPerformers requested gender: " . ($normalizedGender ?? 'null'));
+        
+        // Filter by gender if specified - do this BEFORE shuffling
+        if ($normalizedGender) {
+            $filtered = array_filter($results, function($performer) use ($normalizedGender) {
+                $performerGender = strtolower(trim($performer['gender']));
+                error_log("Comparing performer gender: '{$performerGender}' with requested gender: '{$normalizedGender}'");
+                return $performerGender === $normalizedGender;
             });
-            $results = array_values($results); // Re-index the array
+            
+            // Convert to indexed array (not associative)
+            $filtered = array_values($filtered);
+            
+            // Log the filter results
+            error_log("Fallback filter by '$normalizedGender' - Before: " . count($results) . ", After: " . count($filtered));
+            
+            $results = $filtered;
         }
         
-        // Shuffle and take the first $limit items
+        // Add more performers of the same gender if we don't have enough
+        if (count($results) < $limit && $normalizedGender) {
+            error_log("Adding additional performers of gender: $normalizedGender");
+            for ($i = count($results); $i < $limit; $i++) {
+                $results[] = [
+                    'id' => 'demo-extra-' . $i,
+                    'name' => ucfirst($normalizedGender) . ' Performer Extra ' . $i,
+                    'gender' => $normalizedGender,
+                    'ethnicity' => 'Mixed',
+                    'height' => '173 cm',
+                    'images' => ['/assets/images/placeholder-profile.jpg']
+                ];
+            }
+        }
+        
+        // Shuffle ONLY AFTER filtering by gender
         shuffle($results);
-        return array_slice($results, 0, $limit);
+        $finalResults = array_slice($results, 0, $limit);
+        
+        // Final verification log
+        foreach ($finalResults as $index => $performer) {
+            error_log("Fallback result $index: ID={$performer['id']}, Gender={$performer['gender']}");
+        }
+        
+        return $finalResults;
     }
     
     /**

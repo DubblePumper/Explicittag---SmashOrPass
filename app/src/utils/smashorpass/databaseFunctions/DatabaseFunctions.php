@@ -26,8 +26,16 @@ class DatabaseFunctions {
             $params = array_merge($params, $excludeIds);
         }
         
+        // Improve gender filtering with exact match
         if ($gender) {
-            $whereClause .= " AND gender = ?";
+            // Convert to lowercase for consistent comparison and strip any whitespace
+            $gender = trim(strtolower($gender));
+            
+            // Log the requested gender filter for debugging
+            error_log("Applying gender filter: " . $gender);
+            
+            // Use exact match (BINARY ensures case sensitivity if needed)
+            $whereClause .= " AND LOWER(TRIM(gender)) = ?";
             $params[] = $gender;
         }
         
@@ -40,10 +48,27 @@ class DatabaseFunctions {
         
         $params[] = $limit;
         
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
+        // Log the SQL query and parameters for debugging
+        error_log("SQL Query: " . $sql);
+        error_log("Parameters: " . implode(', ', $params));
         
-        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        try {
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute($params);
+            
+            $results = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            
+            // Log the number of results returned and their genders
+            error_log("Found " . count($results) . " performers with gender filter: " . $gender);
+            foreach ($results as $index => $performer) {
+                error_log("Result $index: ID={$performer['id']}, Name={$performer['name']}, Gender={$performer['gender']}");
+            }
+            
+            return $results;
+        } catch (\PDOException $e) {
+            error_log("Database error in getRandomPerformers: " . $e->getMessage());
+            return [];
+        }
     }
     
     /**

@@ -41,6 +41,15 @@ function initSmashOrPass() {
         });
     }
     
+    // Auto-apply filter when gender is selected
+    const genderFilterSelect = document.getElementById('gender-filter');
+    if (genderFilterSelect) {
+        genderFilterSelect.addEventListener('change', function() {
+            applyFilters();
+        });
+    }
+    
+    // Keep the Apply Filters button for accessibility
     const applyFiltersBtn = document.getElementById('apply-filters');
     if (applyFiltersBtn) {
         applyFiltersBtn.addEventListener('click', function() {
@@ -237,29 +246,45 @@ function makeChoice(option) {
         rejected_id: rejectedId
     }));
     
-    // Update choice count and progress bar
-    choiceCount++;
-    document.getElementById('choice-count').textContent = choiceCount;
     
     // Update progress bar (max out at 100%)
-    const progressPercent = Math.min(choiceCount * 2, 100);
+    // Change multiplier from 2 to 1 to increment progress by 1% per choice
+    const progressPercent = Math.min(choiceCount, 100);
     document.getElementById('progress-bar').style.width = progressPercent + '%';
 }
 
 function applyFilters() {
-    const genderFilter = document.getElementById('gender-filter').value;
+    const genderFilterSelect = document.getElementById('gender-filter');
+    const genderFilter = genderFilterSelect ? genderFilterSelect.value : '';
     
-    socket.send(JSON.stringify({
-        action: 'set_filter',
-        filter: {
-            gender: genderFilter
-        }
-    }));
+    // Add visual feedback to the dropdown
+    if (genderFilterSelect) {
+        genderFilterSelect.classList.add('changed');
+        setTimeout(() => {
+            genderFilterSelect.classList.remove('changed');
+        }, 1000);
+    }
     
-    // Get new performers with the applied filter
-    socket.send(JSON.stringify({
-        action: 'next_pair'
-    }));
+    // Log the filter being applied
+    console.log("Applying gender filter:", genderFilter);
+    
+    // Set the filter if socket is available
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+            action: 'set_filter',
+            filter: {
+                gender: genderFilter
+            }
+        }));
+        
+        // Get new performers with the applied filter
+        socket.send(JSON.stringify({
+            action: 'next_pair'
+        }));
+    } else {
+        console.warn("WebSocket not available, using AJAX fallback");
+        ajaxGetPerformers(genderFilter);
+    }
 }
 
 function displayPreferences(preferences) {
@@ -374,6 +399,16 @@ function showFallbackMode() {
                 });
             }
             
+            // Add auto-apply filter logic for gender select
+            const genderFilterSelect = document.getElementById('gender-filter');
+            if (genderFilterSelect) {
+                genderFilterSelect.removeEventListener('change', null);
+                genderFilterSelect.addEventListener('change', function() {
+                    const genderFilter = this.value;
+                    ajaxGetPerformers(genderFilter);
+                });
+            }
+            
             const applyFiltersBtn = document.getElementById('apply-filters');
             if (applyFiltersBtn) {
                 applyFiltersBtn.removeEventListener('click', null);
@@ -425,7 +460,12 @@ function showFallbackMode() {
 
 // AJAX fallback methods when WebSocket isn't available
 function ajaxGetPerformers(gender = null) {
-    const url = `/api/performers.php?action=random_performers${gender ? '&gender=' + gender : ''}`;
+    // Construct the URL with proper query parameters
+    let url = `/api/performers.php?action=random_performers`;
+    if (gender) {
+        url += `&gender=${encodeURIComponent(gender)}`;
+    }
+    
     console.log("Fetching performers from:", url);
     
     return fetch(url)
@@ -539,7 +579,8 @@ function ajaxSaveChoice(chosenId, rejectedId) {
         document.getElementById('choice-count').textContent = choiceCount;
         
         // Update progress bar (max out at 100%)
-        const progressPercent = Math.min(choiceCount * 2, 100);
+        // Change multiplier from 2 to 1 to increment progress by 1% per choice
+        const progressPercent = Math.min(choiceCount, 100);
         document.getElementById('progress-bar').style.width = progressPercent + '%';
         
         // Get next performers

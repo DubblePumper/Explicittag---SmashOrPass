@@ -47,11 +47,29 @@ try {
 
     switch ($action) {
         case 'random_performers':
-            // Get gender filter if provided
-            $gender = $_GET['gender'] ?? null;
+            // Get gender filter if provided and normalize it
+            $gender = isset($_GET['gender']) ? trim(strtolower($_GET['gender'])) : null;
+            
+            // If gender is an empty string, treat it as null
+            if ($gender === '') {
+                $gender = null;
+            }
+            
+            // Log the gender filter for debugging
+            error_log("API: Requested gender filter: " . ($gender ?? 'null'));
             
             // Get random performers
             $performers = $dbFunctions->getRandomPerformers(2, [], $gender);
+            
+            // Verify the genders match the filter (for debugging)
+            if ($gender && !empty($performers)) {
+                foreach ($performers as $index => $performer) {
+                    $performerGender = strtolower(trim($performer['gender'] ?? ''));
+                    if ($performerGender !== $gender) {
+                        error_log("WARNING: API - Performer at index $index (ID: {$performer['id']}) has gender '$performerGender' which doesn't match filter '$gender'");
+                    }
+                }
+            }
             
             // For the real implementation, get images for each performer
             if (!$usesFallback) {
@@ -65,7 +83,8 @@ try {
             echo json_encode([
                 'type' => 'performers',
                 'performers' => $performers,
-                'fallback_mode' => $usesFallback
+                'fallback_mode' => $usesFallback,
+                'applied_filter' => ['gender' => $gender]  // Include filter in response for debugging
             ]);
             break;
             

@@ -100,13 +100,26 @@ class SmashOrPassServer implements MessageComponentInterface {
     protected function sendRandomPerformers(ConnectionInterface $conn) {
         // Get current user filter if any
         $filter = $this->getUserFilter($conn) ?? [];
-        $gender = $filter['gender'] ?? null;
+        $gender = isset($filter['gender']) ? trim(strtolower($filter['gender'])) : null;
+        
+        // Log the filter being applied
+        error_log("Applying filter for performers: " . json_encode($filter));
         
         // Get 2 random performers
         $performers = $this->dbFunctions->getRandomPerformers(2, [], $gender);
         
+        // Verify that the performers match the requested gender
+        if ($gender && count($performers) > 0) {
+            foreach ($performers as $performer) {
+                if (strtolower(trim($performer['gender'])) !== $gender) {
+                    error_log("WARNING: Performer {$performer['id']} with gender {$performer['gender']} doesn't match requested gender {$gender}");
+                }
+            }
+        }
+        
         if (count($performers) < 2) {
             // Not enough performers found
+            error_log("Not enough performers found with filter: " . json_encode($filter));
             $conn->send(json_encode([
                 'type' => 'error',
                 'message' => 'Not enough performers available. Try changing your filters.'
@@ -155,11 +168,28 @@ class SmashOrPassServer implements MessageComponentInterface {
     }
     
     protected function setUserFilter(ConnectionInterface $conn, array $filter) {
+        // Log the filter being set
+        error_log("Setting filter for connection {$conn->resourceId}: " . json_encode($filter));
+        
+        // Normalize gender value to lowercase if present
+        if (isset($filter['gender']) && is_string($filter['gender'])) {
+            $filter['gender'] = trim(strtolower($filter['gender']));
+            
+            // If empty string, set to null to avoid filtering on empty value
+            if ($filter['gender'] === '') {
+                $filter['gender'] = null;
+            }
+            
+            error_log("Normalized gender filter to: " . ($filter['gender'] ?? 'null'));
+        }
+        
         // Store filter for this connection
         $this->clientSessions[$conn->resourceId . '_filter'] = $filter;
     }
     
     protected function getUserFilter(ConnectionInterface $conn) {
-        return $this->clientSessions[$conn->resourceId . '_filter'] ?? null;
+        $filter = $this->clientSessions[$conn->resourceId . '_filter'] ?? null;
+        error_log("Getting filter for connection {$conn->resourceId}: " . json_encode($filter));
+        return $filter;
     }
 }

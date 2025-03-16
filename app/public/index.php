@@ -33,19 +33,20 @@ $pageDescription = "Play Smash or Pass to find your ideal performer based on you
         <!-- Filters Section -->
         <div class="mb-8">
             <div class="bg-primairy rounded-lg p-4 shadow-lg">
-                <h3 class="text-xl font-semibold mb-4">Filters</h3>
+                <h3 class="text-xl font-semibold mb-4">Gender Preference</h3>
                 <div class="flex flex-wrap gap-4">
-                    <div class="form-group">
-                        <label for="gender-filter" class="block mb-2">Gender Preference</label>
+                    <div class="form-group w-full">
                         <select id="gender-filter" class="bg-darkPrimairy text-TextWhite rounded px-3 py-2 w-full">
                             <option value="">All Genders</option>
                             <option value="female">Female</option>
                             <option value="male">Male</option>
                             <option value="transgender">Transgender</option>
                         </select>
+                        <p class="text-sm text-gray-400 mt-2">Filter will apply automatically when you select a gender</p>
                     </div>
                 </div>
-                <div class="mt-4">
+                <!-- Keep the button but visually hide it for accessibility -->
+                <div class="mt-4 hidden">
                     <button id="apply-filters" class="bg-gradient-to-r from-secondary to-tertery text-white px-4 py-2 rounded-lg hover:opacity-90 transition">
                         Apply Filters
                     </button>

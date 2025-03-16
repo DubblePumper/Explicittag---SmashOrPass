@@ -48,3 +48,27 @@ header h1, header h2, header h3 {
     background-color: #1a1a1a;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
+
+/* Make the gender filter dropdown more prominent */
+#gender-filter {
+    border: 1px solid #40a6ea;
+    padding: 10px;
+    font-size: 1.1rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+}
+
+#gender-filter:focus {
+    border-color: #9d65ea;
+    box-shadow: 0 0 8px rgba(157, 101, 234, 0.6);
+}
+
+/* Add a subtle highlight effect when changing the dropdown */
+#gender-filter.changed {
+    animation: highlight 1s ease;
+}
+
+@keyframes highlight {
+    0% { background-color: rgba(157, 101, 234, 0.3); }
+    100% { background-color: transparent; }
+}
