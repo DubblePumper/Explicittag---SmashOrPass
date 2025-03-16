@@ -9,6 +9,28 @@ if (!defined('BASE_PATH')) {
     define('BASE_PATH', dirname(__DIR__));
 }
 
+// Load environment variables from .env file
+$envFile = BASE_PATH . '/.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        // Skip comments
+        if (strpos(trim($line), '#') === 0) {
+            continue;
+        }
+        
+        // Parse environment variable
+        list($name, $value) = explode('=', $line, 2);
+        $name = trim($name);
+        $value = trim($value);
+        
+        // Set environment variable
+        putenv("$name=$value");
+        $_ENV[$name] = $value;
+        $_SERVER[$name] = $value;
+    }
+}
+
 // Define storage paths
 define('STORAGE_PATH', dirname(__DIR__) . '/storage');
 define('UPLOADS_PATH', STORAGE_PATH . '/uploads');
@@ -16,24 +38,23 @@ define('VIDEOS_PATH', UPLOADS_PATH . '/videos');
 define('LOGS_PATH', STORAGE_PATH . '/logs');
 
 // Environment settings (development, staging, production)
-$environment = 'development';
+$environment = getenv('APP_ENV') ?: 'development';
 
 // Database configuration
 $dbConfig = [
-    'host' => '',
-    'dbname' => '',
-    'username' => '',
-    'password' => '',
-    'charset' => 'utf8mb4',
+    'host' => getenv('DB_HOST'),
+    'dbname' => getenv('DB_NAME'),
+    'username' => getenv('DB_USER'),
+    'password' => getenv('DB_PASSWORD'),
+    'charset' => getenv('DB_CHARSET') ?: 'utf8mb4',
 ];
-
 
 // Application settings
 $appConfig = [
     'name' => 'ExplicitTags',
     'version' => '1.0.0',
-    'debug' => ($environment === 'development'),
-    'timezone' => 'UTC',
+    'debug' => (getenv('APP_DEBUG') === 'true' || $environment === 'development'),
+    'timezone' => getenv('APP_TIMEZONE') ?: 'UTC',
 ];
 
 // Set timezone
