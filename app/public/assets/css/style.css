@@ -1,0 +1,21 @@
+body {
+    /*
+* Created with https://www.css-gradient.com
+* Gradient link: https://www.css-gradient.com/?c1=222222&c2=12153a&gt=r&gd=dtt
+*/
+width: 100dvw;
+min-height: 100dvh;
+background: #222222;
+background: radial-gradient(at center top, #222222, #12153A);
+overflow-x: hidden;
+background-size: cover;
+background-repeat: no-repeat;
+background-attachment: fixed;
+
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}

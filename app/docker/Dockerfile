@@ -9,11 +9,21 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set document root to public directory
-RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|' /etc/apache2/sites-available/000-default.conf \
-    && sed -i 's|<Directory /var/www/>|<Directory /var/www/html/public/>|' /etc/apache2/apache2.conf \
-    && sed -i 's/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf \
-    && echo "ServerName localhost" >> /etc/apache2/apache2.conf
+# Configure Apache to use the public directory
+RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|' /etc/apache2/sites-available/000-default.conf
+
+# Allow .htaccess to override Apache configuration
+RUN { \
+    echo '<Directory /var/www/html>'; \
+    echo '    AllowOverride All'; \
+    echo '    Require all granted'; \
+    echo '</Directory>'; \
+    echo '<Directory /var/www/html/public>'; \
+    echo '    AllowOverride All'; \
+    echo '    Require all granted'; \
+    echo '</Directory>'; \
+    } >> /etc/apache2/conf-available/docker-php.conf \
+    && a2enconf docker-php
 
 # Set proper permissions
 RUN chown -R www-data:www-data /var/www/html
