@@ -1,0 +1,37 @@
+services:
+  php-environment:
+    container_name: php-apacheExplicittagsSmashOrPass
+    build:
+      context: ./app
+      dockerfile: ./app/docker/Dockerfile
+    depends_on:
+      - db
+    volumes:
+      - ./app:/var/www/html/
+    ports:
+      - 8000:80
+  db:
+    container_name: dbExplicittagsSmashOrPass
+    image: mysql:latest
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456789
+      MYSQL_DATABASE: headDB
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: 123456789
+    ports:
+      - "9906:3306"
+    volumes:
+      - dbExplicittagsSmashOrPass_data:/var/lib/mysql
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadminExplicittagsSmashOrPass
+    links:
+      - db
+    environment:
+      PMA_HOST: db
+    restart: always
+    ports:
+      - 8081:80
+volumes:
+  dbExplicittagsSmashOrPass_data:

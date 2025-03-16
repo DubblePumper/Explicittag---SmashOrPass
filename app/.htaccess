@@ -1,0 +1,18 @@
+RewriteEngine On
+# Redirect all requests to the public folder unless they are already going to the public folder
+RewriteCond %{REQUEST_URI} !^/public/
+# Redirect all requests to the public folder
+RewriteRule ^(.*)$ /public/$1 [L]
+
+# Handle PHP files without extension
+# If the file exists without .php extension, serve the file directly
+RewriteCond %{REQUEST_FILENAME} !-f
+# If the file with .php extension exists
+RewriteCond %{REQUEST_FILENAME}.php -f
+# Rewrite to add .php extension internally
+RewriteRule ^(.*)$ $1.php [L]
+
+# Set default index file
+DirectoryIndex index.php
+
+
