@@ -6,6 +6,7 @@ if (!defined('BASE_PATH')) {
 
 
 // Define default values
+$pageTitle = 'ExplicitTags';
 $pageDescription = isset($pageDescription) ? $pageDescription : "Find the performer you like";
 $pageKeywords = isset($pageKeywords) ? $pageKeywords : "adult, video analysis, AI identification, porn tags, performer recognition";
 

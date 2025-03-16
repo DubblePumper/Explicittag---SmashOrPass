@@ -1,3 +1,4 @@
 app/config/config.php
 app/.env
+app/vendor
 .cache_ggshield

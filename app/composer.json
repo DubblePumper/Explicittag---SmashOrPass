@@ -1,0 +1,23 @@
+{
+    "config": {
+        "vendor-dir": "vendor"
+      },
+    "name": "sander/app",
+    "require": {
+        "cboden/ratchet": "0.4.4",
+        "vlucas/phpdotenv": "5.6",
+        "symfony/http-foundation": "6.0",
+        "monolog/monolog": "3.8"
+    },
+    "autoload": {
+        "psr-4": {
+            "Sander\\App\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "DubblePumper",
+            "email": "sander.truyts@gmail.com"
+        }
+    ]
+}
