@@ -128,6 +128,24 @@ INSERT INTO `supported_adult_websites` (`website_id`, `website_name`, `website_u
 (8, 'Tube8', 'https://tube8.com'),
 (9, 'SpankBang', 'https://spankbang.com');
 
+-- --------------------------------------------------------
+
+--
+-- Tabelstructuur voor tabel `user_choices`
+--
+
+CREATE TABLE IF NOT EXISTS `user_choices` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `session_id` varchar(255) NOT NULL,
+  `chosen_performer_id` varchar(100) NOT NULL,
+  `rejected_performer_id` varchar(100) NOT NULL,
+  `choice_time` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `session_id` (`session_id`),
+  KEY `chosen_performer_id` (`chosen_performer_id`),
+  KEY `rejected_performer_id` (`rejected_performer_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 --
 -- Indexen voor geëxporteerde tabellen
 --
@@ -147,6 +165,14 @@ ALTER TABLE `performers` ADD FULLTEXT KEY `name_fulltext` (`name`);
 --
 ALTER TABLE `performer_images`
   ADD CONSTRAINT `performer_images_ibfk_1` FOREIGN KEY (`performer_id`) REFERENCES `performers` (`id`);
+
+--
+-- Beperkingen voor tabel `user_choices`
+--
+ALTER TABLE `user_choices`
+  ADD CONSTRAINT `user_choices_ibfk_1` FOREIGN KEY (`chosen_performer_id`) REFERENCES `performers` (`id`),
+  ADD CONSTRAINT `user_choices_ibfk_2` FOREIGN KEY (`rejected_performer_id`) REFERENCES `performers` (`id`);
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

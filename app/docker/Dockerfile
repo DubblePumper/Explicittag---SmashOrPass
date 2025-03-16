@@ -4,6 +4,7 @@ FROM php:apache
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        libicu-dev \
+       supervisor \
     && docker-php-ext-install pdo pdo_mysql mysqli \
     && a2enmod rewrite headers \
     && apt-get clean \
@@ -25,9 +26,15 @@ RUN { \
     } >> /etc/apache2/conf-available/docker-php.conf \
     && a2enconf docker-php
 
+# Setup supervisor to run WebSocket server
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
 # Set proper permissions
 RUN chown -R www-data:www-data /var/www/html
 
+# Start both Apache and Supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
 EXPOSE 80
-EXPOSE 81
+EXPOSE 8080
 EXPOSE 3306

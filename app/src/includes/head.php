@@ -104,4 +104,11 @@ $pageKeywords = isset($pageKeywords) ? $pageKeywords : "adult, video analysis, A
 
     <!-- Load preloader script early -->
     <script src="/assets/js/preloader.js?v=<?php echo time(); ?>"></script>
+    
+    <!-- Load Smash or Pass script for relevant pages -->
+    <?php 
+    $currentPage = basename($_SERVER['PHP_SELF'], '.php');
+    if ($currentPage === 'index'): ?>
+    <script src="/assets/js/smashorpass.js?v=<?php echo time(); ?>" defer></script>
+    <?php endif; ?>
 </head>

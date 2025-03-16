@@ -19,3 +19,32 @@ background-attachment: fixed;
     padding: 0;
     box-sizing: border-box;
 }
+
+/* Header styles */
+header h1, header h2, header h3 {
+    color: #e0e0e0 !important; /* Force white text color */
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.5); /* Add shadow for better visibility */
+}
+
+/* Gradient text can sometimes be invisible depending on background */
+.text-transparent {
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+}
+
+/* Performer card styles */
+.performer-card {
+    transition: transform 0.3s ease;
+}
+
+.performer-card:hover {
+    transform: scale(1.03);
+}
+
+/* Preference item styles */
+.preference-item {
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background-color: #1a1a1a;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
