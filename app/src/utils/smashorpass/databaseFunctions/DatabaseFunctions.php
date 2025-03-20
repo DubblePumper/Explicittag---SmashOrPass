@@ -259,4 +259,22 @@ class DatabaseFunctions {
         
         $this->pdo->exec($sql);
     }
+    
+    /**
+     * Get the number of choices a user has made
+     * 
+     * @param string $sessionId User session ID
+     * @return int Number of choices
+     */
+    public function getUserChoiceCount($sessionId) {
+        try {
+            $sql = "SELECT COUNT(*) FROM user_choices WHERE session_id = ?";
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([$sessionId]);
+            return (int) $stmt->fetchColumn();
+        } catch (\PDOException $e) {
+            error_log("Error getting user choice count: " . $e->getMessage());
+            return 0;
+        }
+    }
 }

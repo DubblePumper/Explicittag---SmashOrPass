@@ -17,9 +17,13 @@ if (file_exists(BASE_PATH . '/src/utils/smashorpass/databaseFunctions/DatabaseFu
     $usesFallback = true;
 }
 
+// Include the recommendation engine
+require_once BASE_PATH . '/src/utils/smashorpass/recommendation/RecommendationEngine.php';
+
 // Import the classes
 use Sander\App\Utils\SmashOrPass\DatabaseFunctions;
 use Sander\App\Utils\SmashOrPass\DatabaseFunctionsFallback;
+use Sander\App\Utils\SmashOrPass\Recommendation\RecommendationEngine;
 
 // Start or resume session
 session_start();
@@ -58,8 +62,17 @@ try {
             // Log the gender filter for debugging
             error_log("API: Requested gender filter: " . ($gender ?? 'null'));
             
-            // Get random performers
-            $performers = $dbFunctions->getRandomPerformers(2, [], $gender);
+            // Track if it's the first visit (no choices made yet)
+            $isFirstVisit = $dbFunctions->getUserChoiceCount($_SESSION['smash_or_pass_session']) === 0;
+            
+            // If this is not the first visit, use recommendation engine
+            if (!$isFirstVisit && !$usesFallback) {
+                $recommendationEngine = new RecommendationEngine($pdo, $_SESSION['smash_or_pass_session']);
+                $performers = $recommendationEngine->getRecommendedPerformers(2, [], $gender);
+            } else {
+                // Get random performers for first visit or fallback
+                $performers = $dbFunctions->getRandomPerformers(2, [], $gender);
+            }
             
             // Verify the genders match the filter (for debugging)
             if ($gender && !empty($performers)) {
@@ -84,7 +97,25 @@ try {
                 'type' => 'performers',
                 'performers' => $performers,
                 'fallback_mode' => $usesFallback,
-                'applied_filter' => ['gender' => $gender]  // Include filter in response for debugging
+                'applied_filter' => ['gender' => $gender],  // Include filter in response for debugging
+                'recommended' => !$isFirstVisit && !$usesFallback,
+                'next_batch' => $isFirstVisit || $usesFallback ? null : getNextBatch($pdo, $_SESSION['smash_or_pass_session'], $gender)
+            ]);
+            break;
+            
+        case 'preload_next_batch':
+            // For explicitly requesting next batch of performers to preload
+            if ($usesFallback) {
+                echo json_encode(['success' => false, 'message' => 'Preloading not available in fallback mode']);
+                break;
+            }
+            
+            $gender = isset($_GET['gender']) ? trim(strtolower($_GET['gender'])) : null;
+            $nextBatch = getNextBatch($pdo, $_SESSION['smash_or_pass_session'], $gender);
+            
+            echo json_encode([
+                'type' => 'preload_batch',
+                'performers' => $nextBatch
             ]);
             break;
             
@@ -105,7 +136,17 @@ try {
                 $data['rejected_id']
             );
             
-            echo json_encode(['success' => $success]);
+            // If not in fallback mode, get next batch for preloading
+            $nextBatch = $usesFallback ? null : getNextBatch(
+                $pdo, 
+                $_SESSION['smash_or_pass_session'], 
+                isset($data['filter']['gender']) ? trim(strtolower($data['filter']['gender'])) : null
+            );
+            
+            echo json_encode([
+                'success' => $success,
+                'next_batch' => $nextBatch
+            ]);
             break;
             
         case 'get_preferences':
@@ -127,4 +168,31 @@ try {
     error_log("API Error: " . $e->getMessage());
     http_response_code(500);
     echo json_encode(['error' => 'Server error', 'message' => $e->getMessage()]);
+}
+
+/**
+ * Get next batch of performers for preloading
+ * 
+ * @param \PDO $pdo Database connection
+ * @param string $sessionId User session ID
+ * @param string|null $gender Gender filter
+ * @return array Next batch of performers
+ */
+function getNextBatch($pdo, $sessionId, $gender = null) {
+    try {
+        $recommendationEngine = new RecommendationEngine($pdo, $sessionId);
+        $performers = $recommendationEngine->getRecommendedPerformers(4, [], $gender);
+        
+        $dbFunctions = new DatabaseFunctions($pdo);
+        
+        // Get images for preloading
+        foreach ($performers as &$performer) {
+            $performer['images'] = $dbFunctions->getPerformerImages($performer['id'], 1);
+        }
+        
+        return $performers;
+    } catch (Exception $e) {
+        error_log("Error getting next batch: " . $e->getMessage());
+        return [];
+    }
 }
