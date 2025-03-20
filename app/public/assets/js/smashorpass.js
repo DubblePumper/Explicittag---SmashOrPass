@@ -1,611 +1,527 @@
-// WebSocket connection for Smash or Pass
-// Avoid re-declaring variables if they might be declared elsewhere
-if (typeof socket === 'undefined') {
-    var socket;
-}
-if (typeof choiceCount === 'undefined') {
-    var choiceCount = 0;
-}
-if (typeof currentPerformers === 'undefined') {
-    var currentPerformers = {};
-}
-if (typeof isConnecting === 'undefined') {
-    var isConnecting = false;
-}
-if (typeof reconnectAttempts === 'undefined') {
-    var reconnectAttempts = 0;
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    // Only initialize if we're on the smash or pass page (with the right elements)
-    if (document.getElementById('performer-a') && document.getElementById('performer-b')) {
-        initSmashOrPass();
+/**
+ * SmashOrPass Game Logic
+ * Handles the UI and game logic for the Smash or Pass feature
+ */
+document.addEventListener('DOMContentLoaded', async function() {
+    // Elements
+    const gameContainer = document.getElementById('game-container');
+    const resultsContainer = document.getElementById('results-container');
+    const performerACard = document.getElementById('performer-a');
+    const performerBCard = document.getElementById('performer-b');
+    const performerAImage = document.getElementById('performer-a-image');
+    const performerBImage = document.getElementById('performer-b-image');
+    const performerAName = document.getElementById('performer-a-name');
+    const performerBName = document.getElementById('performer-b-name');
+    const performerADetails = document.getElementById('performer-a-details');
+    const performerBDetails = document.getElementById('performer-b-details');
+    const smashButtons = document.querySelectorAll('.smash-button');
+    const passBothButton = document.getElementById('pass-both');
+    const viewPreferencesButton = document.getElementById('view-preferences');
+    const continuePlayingButton = document.getElementById('continue-playing');
+    const preferencesData = document.getElementById('preferences-data');
+    const choiceCount = document.getElementById('choice-count');
+    const progressBar = document.getElementById('progress-bar');
+    const genderFilter = document.getElementById('gender-filter');
+    
+    // Game state
+    let currentPerformers = [];
+    let userChoices = 0;
+    let gameActive = true;
+    let isProcessingChoice = false; // Flag to prevent multiple rapid choices
+    
+    // Load the WebSocket manager script and initialize it
+    await loadWebSocketManager();
+    
+    // Initialize WebSocket and fetch first performers
+    await initGame();
+    
+    /**
+     * Load WebSocket Manager script
+     */
+    async function loadWebSocketManager() {
+        // Check if WebSocket manager is already loaded
+        if (window.wsManager) {
+            console.log('WebSocket manager already loaded');
+            return;
+        }
+        
+        return new Promise((resolve, reject) => {
+            // Create script element
+            const script = document.createElement('script');
+            script.src = '/assets/js/utils/websocket.js';
+            script.async = true;
+            
+            // Set up load and error handlers
+            script.onload = () => {
+                console.log('WebSocket manager script loaded successfully');
+                resolve();
+            };
+            
+            script.onerror = (error) => {
+                console.error('Failed to load WebSocket manager script:', error);
+                reject(error);
+            };
+            
+            // Add script to document
+            document.head.appendChild(script);
+        });
+    }
+    
+    /**
+     * Initialize the game
+     */
+    async function initGame() {
+        try {
+            // Initialize WebSocket (will automatically use AJAX fallback if needed)
+            if (window.wsManager) {
+                await wsManager.init();
+                console.log('Attempting to connect to WebSocket on', wsManager.config?.url);
+                
+                // Set up WebSocket event listeners
+                wsManager.on('performers', handlePerformersData);
+                wsManager.on('preferences', handlePreferencesData);
+                wsManager.on('error', handleWebSocketError);
+                wsManager.on('connect', () => {
+                    console.log('WebSocket connected successfully');
+                });
+                wsManager.on('fallback', (data) => {
+                    console.log('Using AJAX fallback due to:', data.reason);
+                });
+            } else {
+                console.error('WebSocket manager not available, will use direct AJAX fallback');
+            }
+            
+            // Load initial performers
+            await fetchPerformers();
+        } catch (error) {
+            console.error('Error initializing game:', error);
+            setErrorState('Failed to initialize the game. Please refresh the page and try again.');
+        }
+    }
+    
+    // Event listeners
+    
+    // Handle smash button click
+    smashButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            if (isProcessingChoice) return; // Prevent multiple rapid clicks
+            
+            const option = this.getAttribute('data-option');
+            let chosenId, rejectedId;
+            
+            if (option === 'a') {
+                chosenId = performerACard.getAttribute('data-performer-id');
+                rejectedId = performerBCard.getAttribute('data-performer-id');
+            } else {
+                chosenId = performerBCard.getAttribute('data-performer-id');
+                rejectedId = performerACard.getAttribute('data-performer-id');
+            }
+            
+            makeChoice(chosenId, rejectedId);
+        });
+    });
+    
+    // Handle pass both button click
+    passBothButton.addEventListener('click', function() {
+        if (isProcessingChoice) return;
+        fetchPerformers();
+    });
+    
+    // Handle view preferences button click
+    viewPreferencesButton.addEventListener('click', function() {
+        fetchPreferences();
+    });
+    
+    // Handle continue playing button click
+    continuePlayingButton.addEventListener('click', function() {
+        gameContainer.style.display = 'block';
+        resultsContainer.style.display = 'none';
+        gameActive = true;
+        
+        // If we don't have performers loaded, fetch new ones
+        if (currentPerformers.length < 2) {
+            fetchPerformers();
+        }
+    });
+    
+    // Handle gender filter change
+    genderFilter.addEventListener('change', function() {
+        const gender = this.value;
+        console.log('Applying gender filter:', gender);
+        applyFilters({ gender });
+    });
+    
+    // Core game functions
+    
+    /**
+     * Make a choice between performers
+     */
+    async function makeChoice(chosenId, rejectedId) {
+        if (!chosenId || !rejectedId || isProcessingChoice) {
+            console.error('Invalid choice or already processing a choice');
+            return;
+        }
+        
+        try {
+            isProcessingChoice = true;
+            
+            // Add UI feedback - optional styling to indicate processing
+            const buttons = document.querySelectorAll('.smash-button, #pass-both');
+            buttons.forEach(btn => btn.classList.add('opacity-50'));
+            
+            // Send choice via WebSocket or AJAX fallback
+            if (window.wsManager) {
+                await wsManager.send({
+                    action: 'choice',
+                    chosen_id: chosenId,
+                    rejected_id: rejectedId
+                });
+            } else {
+                // Direct AJAX fallback if WebSocket manager isn't available
+                await fetch('/api/performers.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        action: 'save_choice',
+                        chosen_id: chosenId,
+                        rejected_id: rejectedId
+                    })
+                });
+            }
+            
+            // Update UI state
+            userChoices++;
+            choiceCount.textContent = userChoices;
+            updateProgressBar();
+            
+            // Fetch new performers
+            await fetchPerformers();
+        } catch (error) {
+            console.error('Error making choice:', error);
+            setErrorState('Failed to save your choice. Please try again.');
+        } finally {
+            isProcessingChoice = false;
+            
+            // Remove UI feedback
+            const buttons = document.querySelectorAll('.smash-button, #pass-both');
+            buttons.forEach(btn => btn.classList.remove('opacity-50'));
+        }
+    }
+    
+    /**
+     * Apply filters to performers
+     */
+    async function applyFilters(filters) {
+        try {
+            // Show loading state
+            setLoadingState(true);
+            
+            if (window.wsManager) {
+                if (wsManager.isWebSocketAvailable()) {
+                    await wsManager.send({
+                        action: 'set_filter',
+                        filter: filters
+                    });
+                } else {
+                    console.log('WebSocket not available, using AJAX fallback');
+                }
+                
+                // Fetch new performers with applied filters
+                await fetchPerformers(filters);
+            } else {
+                // Direct AJAX fallback
+                await fetchPerformers(filters);
+            }
+        } catch (error) {
+            console.error('Error applying filters:', error);
+            setErrorState('Failed to apply filters. Please try again.');
+        } finally {
+            setLoadingState(false);
+        }
+    }
+    
+    /**
+     * Fetch random performers
+     */
+    async function fetchPerformers(filters = null) {
+        try {
+            // Show loading state
+            setLoadingState(true);
+            
+            // Get current gender filter if not provided
+            if (!filters && genderFilter) {
+                const gender = genderFilter.value;
+                filters = { gender };
+            }
+            
+            let response;
+            
+            // Use WebSocket manager to get performers if available
+            if (window.wsManager) {
+                response = await wsManager.send({
+                    action: 'random_performers',
+                    filter: filters
+                });
+            } else {
+                // Direct AJAX fallback
+                let url = '/api/performers.php?action=random_performers';
+                if (filters?.gender) {
+                    url += `&gender=${encodeURIComponent(filters.gender)}`;
+                }
+                
+                console.log('Fetching performers from:', url);
+                const fetchResponse = await fetch(url);
+                response = await fetchResponse.json();
+            }
+            
+            console.log('Received performer data:', response);
+            
+            // Process the response
+            if (response && response.performers && response.performers.length >= 2) {
+                handlePerformersData(response);
+            } else {
+                console.error('Invalid response data:', response);
+                setErrorState('Could not load performers. Please try again or change your filters.');
+            }
+        } catch (error) {
+            console.error('Error fetching performers:', error);
+            setErrorState('Network error. Please check your connection and try again.');
+        } finally {
+            setLoadingState(false);
+        }
+    }
+    
+    /**
+     * Fetch user preferences
+     */
+    async function fetchPreferences() {
+        try {
+            setLoadingState(true);
+            
+            let response;
+            
+            if (window.wsManager) {
+                response = await wsManager.send({
+                    action: 'get_preferences'
+                });
+            } else {
+                // Direct AJAX fallback
+                const fetchResponse = await fetch('/api/performers.php?action=get_preferences');
+                response = await fetchResponse.json();
+            }
+            
+            if (response && response.preferences) {
+                handlePreferencesData(response);
+                
+                // Show results container
+                gameContainer.style.display = 'none';
+                resultsContainer.style.display = 'block';
+                gameActive = false;
+            } else {
+                console.error('Invalid preferences data:', response);
+                setErrorState('Could not load your preferences. Please try again.');
+            }
+        } catch (error) {
+            console.error('Error fetching preferences:', error);
+            setErrorState('Failed to load your preferences. Please try again.');
+        } finally {
+            setLoadingState(false);
+        }
+    }
+    
+    /**
+     * Handle performers data from WebSocket or AJAX
+     */
+    function handlePerformersData(data) {
+        if (!data.performers || data.performers.length < 2) {
+            console.error('Not enough performers in the response');
+            return;
+        }
+        
+        currentPerformers = data.performers;
+        console.log('Displaying performers:', currentPerformers);
+        
+        // Update UI with performer A
+        performerACard.setAttribute('data-performer-id', currentPerformers[0].id);
+        performerAName.textContent = currentPerformers[0].name || 'Unknown Performer';
+        
+        // Set image for performer A
+        if (currentPerformers[0].images && currentPerformers[0].images.length > 0) {
+            const imageUrl = currentPerformers[0].images[0];
+            console.log('Setting image A to:', imageUrl);
+            performerAImage.src = imageUrl;
+            performerAImage.alt = currentPerformers[0].name || 'Performer A';
+        } else {
+            performerAImage.src = '/assets/images/placeholder-profile.jpg';
+        }
+        
+        // Set details for performer A
+        const detailsA = [];
+        if (currentPerformers[0].gender) detailsA.push(currentPerformers[0].gender);
+        if (currentPerformers[0].ethnicity) detailsA.push(currentPerformers[0].ethnicity);
+        if (currentPerformers[0].measurements) detailsA.push(currentPerformers[0].measurements);
+        performerADetails.textContent = detailsA.join(' • ') || 'No details available';
+        
+        // Update UI with performer B
+        performerBCard.setAttribute('data-performer-id', currentPerformers[1].id);
+        performerBName.textContent = currentPerformers[1].name || 'Unknown Performer';
+        
+        // Set image for performer B
+        if (currentPerformers[1].images && currentPerformers[1].images.length > 0) {
+            const imageUrl = currentPerformers[1].images[0];
+            console.log('Setting image B to:', imageUrl);
+            performerBImage.src = imageUrl;
+            performerBImage.alt = currentPerformers[1].name || 'Performer B';
+        } else {
+            performerBImage.src = '/assets/images/placeholder-profile.jpg';
+        }
+        
+        // Set details for performer B
+        const detailsB = [];
+        if (currentPerformers[1].gender) detailsB.push(currentPerformers[1].gender);
+        if (currentPerformers[1].ethnicity) detailsB.push(currentPerformers[1].ethnicity);
+        if (currentPerformers[1].measurements) detailsB.push(currentPerformers[1].measurements);
+        performerBDetails.textContent = detailsB.join(' • ') || 'No details available';
+    }
+    
+    /**
+     * Handle preferences data
+     */
+    function handlePreferencesData(data) {
+        if (!data.preferences) {
+            console.error('No preferences data found');
+            return;
+        }
+        
+        const preferences = data.preferences;
+        
+        // Clear previous preferences data
+        preferencesData.innerHTML = '';
+        
+        // Helper function to create preference cards
+        const createPreferenceCard = (title, content) => {
+            const card = document.createElement('div');
+            card.className = 'bg-darkPrimairy rounded-lg p-4 shadow';
+            
+            const titleEl = document.createElement('h3');
+            titleEl.className = 'text-lg font-semibold mb-2 text-secondary';
+            titleEl.textContent = title;
+            
+            const contentEl = document.createElement('div');
+            contentEl.className = 'text-TextWhite';
+            contentEl.innerHTML = content;
+            
+            card.appendChild(titleEl);
+            card.appendChild(contentEl);
+            
+            return card;
+        };
+        
+        // Process categorical preferences (gender, ethnicity, hair_color, eye_color, cup_size)
+        ['gender', 'ethnicity', 'hair_color', 'eye_color', 'cup_size'].forEach(attr => {
+            if (preferences[attr] && Object.keys(preferences[attr]).length > 0) {
+                let content = '<ul class="list-disc list-inside">';
+                
+                // Get total count for percentage calculation
+                const total = Object.values(preferences[attr]).reduce((sum, count) => sum + count, 0);
+                
+                // Sort by count (highest first)
+                const sorted = Object.entries(preferences[attr])
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3); // Top 3 preferences
+                
+                sorted.forEach(([value, count]) => {
+                    const percentage = Math.round((count / total) * 100);
+                    content += `<li>${value} <span class="text-gray-400">(${percentage}%)</span></li>`;
+                });
+                
+                content += '</ul>';
+                
+                // Format title (capitalize first letter, replace underscores with spaces)
+                const title = attr.charAt(0).toUpperCase() + attr.slice(1).replace('_', ' ');
+                
+                preferencesData.appendChild(createPreferenceCard(title, content));
+            }
+        });
+        
+        // Process numerical preferences (height, weight)
+        ['height', 'weight'].forEach(attr => {
+            if (preferences[attr]) {
+                let content = `<p class="text-center text-xl">${preferences[attr]}`;
+                
+                // Add units
+                if (attr === 'height') content += ' cm';
+                if (attr === 'weight') content += ' kg';
+                
+                content += '</p>';
+                
+                const title = attr.charAt(0).toUpperCase() + attr.slice(1);
+                preferencesData.appendChild(createPreferenceCard(title, content));
+            }
+        });
+        
+        // Process boolean preferences (fake_boobs)
+        if ('fake_boobs' in preferences) {
+            const percentage = preferences.fake_boobs;
+            let content = `<p class="text-center text-xl">${percentage}%</p>`;
+            preferencesData.appendChild(createPreferenceCard('Fake Boobs Preference', content));
+        }
+    }
+    
+    // Helper functions
+    
+    /**
+     * Update progress bar
+     */
+    function updateProgressBar() {
+        // Calculate progress (arbitrary scale - 100 choices = 100%)
+        const maxChoices = 100;
+        const progress = Math.min(100, (userChoices / maxChoices) * 100);
+        progressBar.style.width = `${progress}%`;
+    }
+    
+    /**
+     * Set loading state
+     */
+    function setLoadingState(isLoading) {
+        if (isLoading) {
+            // Add loading class to game container
+            gameContainer.classList.add('opacity-60');
+            // Disable buttons
+            document.querySelectorAll('button').forEach(btn => {
+                btn.disabled = true;
+            });
+        } else {
+            // Remove loading class
+            gameContainer.classList.remove('opacity-60');
+            // Enable buttons
+            document.querySelectorAll('button').forEach(btn => {
+                btn.disabled = false;
+            });
+        }
+    }
+    
+    /**
+     * Set error state
+     */
+    function setErrorState(message) {
+        // Display error message to user
+        // This could be implemented as a toast, alert, or inline message
+        console.error('Error:', message);
+        
+        // Simple alert for now - could be replaced with nicer UI
+        if (message) {
+            alert(message);
+        }
+    }
+    
+    /**
+     * Handle WebSocket errors
+     */
+    function handleWebSocketError(error) {
+        console.error('WebSocket error:', error);
+        // Most errors will be handled by the WebSocket manager with automatic fallback
     }
 });
-
-function initSmashOrPass() {
-    connectWebSocket();
-    
-    // Set up event listeners
-    document.querySelectorAll('.smash-button').forEach(button => {
-        button.addEventListener('click', function() {
-            const option = this.getAttribute('data-option');
-            makeChoice(option);
-        });
-    });
-    
-    const passBothBtn = document.getElementById('pass-both');
-    if (passBothBtn) {
-        passBothBtn.addEventListener('click', function() {
-            makeChoice('pass');
-        });
-    }
-    
-    // Auto-apply filter when gender is selected
-    const genderFilterSelect = document.getElementById('gender-filter');
-    if (genderFilterSelect) {
-        genderFilterSelect.addEventListener('change', function() {
-            applyFilters();
-        });
-    }
-    
-    // Keep the Apply Filters button for accessibility
-    const applyFiltersBtn = document.getElementById('apply-filters');
-    if (applyFiltersBtn) {
-        applyFiltersBtn.addEventListener('click', function() {
-            applyFilters();
-        });
-    }
-    
-    const viewPreferencesBtn = document.getElementById('view-preferences');
-    if (viewPreferencesBtn) {
-        viewPreferencesBtn.addEventListener('click', function() {
-            socket.send(JSON.stringify({
-                action: 'get_preferences'
-            }));
-            
-            document.getElementById('game-container').classList.add('hidden');
-            document.getElementById('results-container').classList.remove('hidden');
-        });
-    }
-    
-    const continuePlayingBtn = document.getElementById('continue-playing');
-    if (continuePlayingBtn) {
-        continuePlayingBtn.addEventListener('click', function() {
-            document.getElementById('results-container').classList.add('hidden');
-            document.getElementById('game-container').classList.remove('hidden');
-        });
-    }
-}
-
-function connectWebSocket() {
-    // Prevent multiple connection attempts
-    if (isConnecting) return;
-    isConnecting = true;
-    
-    // Check if we've tried too many times
-    if (reconnectAttempts > 5) {
-        console.error("Too many reconnection attempts, using fallback mode");
-        showFallbackMode();
-        return;
-    }
-    
-    reconnectAttempts++;
-    
-    // Use secure WebSocket if page is loaded over HTTPS
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname;
-    
-    try {
-        console.log(`Attempting to connect to WebSocket on ${protocol}//${host}:8090`); // Updated to port 8090
-        socket = new WebSocket(`${protocol}//${host}:8090`); // Updated to port 8090
-        
-        socket.onopen = function(e) {
-            console.log("WebSocket connection established");
-            isConnecting = false;
-            reconnectAttempts = 0; // Reset counter on successful connection
-        };
-        
-        socket.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'performers') {
-                    displayPerformers(data.performers);
-                } else if (data.type === 'preferences') {
-                    displayPreferences(data.preferences);
-                } else if (data.type === 'error') {
-                    alert(data.message);
-                }
-            } catch (e) {
-                console.error("Error handling message:", e);
-            }
-        };
-        
-        socket.onclose = function(event) {
-            console.log("WebSocket connection closed");
-            isConnecting = false;
-            
-            // Try to reconnect after 3 seconds
-            if (reconnectAttempts < 6) {
-                console.log(`Reconnection attempt ${reconnectAttempts} scheduled in 3 seconds...`);
-                setTimeout(connectWebSocket, 3000);
-            } else {
-                showFallbackMode();
-            }
-        };
-        
-        socket.onerror = function(error) {
-            console.error("WebSocket error:", error);
-            isConnecting = false;
-        };
-    } catch (e) {
-        console.error("Error creating WebSocket:", e);
-        isConnecting = false;
-        
-        // Try again after a delay
-        if (reconnectAttempts < 6) {
-            setTimeout(connectWebSocket, 3000);
-        } else {
-            showFallbackMode();
-        }
-    }
-}
-
-function displayPerformers(performers) {
-    if (performers.length < 2) {
-        alert("Not enough performers available. Try changing your filters.");
-        return;
-    }
-    
-    console.log("Displaying performers:", performers);
-    
-    // Store current performers
-    currentPerformers = {
-        a: performers[0],
-        b: performers[1]
-    };
-    
-    // Update performer A
-    document.getElementById('performer-a').dataset.performerId = performers[0].id;
-    document.getElementById('performer-a-name').textContent = performers[0].name;
-    
-    const imageA = document.getElementById('performer-a-image');
-    if (performers[0].images && performers[0].images[0]) {
-        console.log("Setting image A to:", performers[0].images[0]);
-        imageA.src = performers[0].images[0];
-    } else {
-        console.log("Using placeholder for image A");
-        imageA.src = '/assets/images/placeholder-profile.jpg';
-    }
-    
-    // Add error handling for image A
-    imageA.onerror = function() {
-        console.error("Failed to load image A:", this.src);
-        this.src = '/assets/images/placeholder-profile.jpg';
-    };
-    
-    let detailsA = [];
-    if (performers[0].gender) detailsA.push(performers[0].gender);
-    if (performers[0].ethnicity) detailsA.push(performers[0].ethnicity);
-    if (performers[0].height) detailsA.push(performers[0].height);
-    document.getElementById('performer-a-details').textContent = detailsA.join(' • ');
-    
-    // Update performer B
-    document.getElementById('performer-b').dataset.performerId = performers[1].id;
-    document.getElementById('performer-b-name').textContent = performers[1].name;
-    
-    const imageB = document.getElementById('performer-b-image');
-    if (performers[1].images && performers[1].images[0]) {
-        console.log("Setting image B to:", performers[1].images[0]);
-        imageB.src = performers[1].images[0];
-    } else {
-        console.log("Using placeholder for image B");
-        imageB.src = '/assets/images/placeholder-profile.jpg';
-    }
-    
-    // Add error handling for image B
-    imageB.onerror = function() {
-        console.error("Failed to load image B:", this.src);
-        this.src = '/assets/images/placeholder-profile.jpg';
-    };
-    
-    let detailsB = [];
-    if (performers[1].gender) detailsB.push(performers[1].gender);
-    if (performers[1].ethnicity) detailsB.push(performers[1].ethnicity);
-    if (performers[1].height) detailsB.push(performers[1].height);
-    document.getElementById('performer-b-details').textContent = detailsB.join(' • ');
-}
-
-function makeChoice(option) {
-    if (!currentPerformers.a || !currentPerformers.b) {
-        return;
-    }
-    
-    let chosenId, rejectedId;
-    
-    if (option === 'a') {
-        chosenId = currentPerformers.a.id;
-        rejectedId = currentPerformers.b.id;
-    } else if (option === 'b') {
-        chosenId = currentPerformers.b.id;
-        rejectedId = currentPerformers.a.id;
-    } else {
-        // Pass both
-        // We'll still request new performers but not record a preference
-        socket.send(JSON.stringify({
-            action: 'next_pair'
-        }));
-        return;
-    }
-    
-    // Send choice to server
-    socket.send(JSON.stringify({
-        action: 'choice',
-        chosen_id: chosenId,
-        rejected_id: rejectedId
-    }));
-    
-    
-    // Update progress bar (max out at 100%)
-    // Change multiplier from 2 to 1 to increment progress by 1% per choice
-    const progressPercent = Math.min(choiceCount, 100);
-    document.getElementById('progress-bar').style.width = progressPercent + '%';
-}
-
-function applyFilters() {
-    const genderFilterSelect = document.getElementById('gender-filter');
-    const genderFilter = genderFilterSelect ? genderFilterSelect.value : '';
-    
-    // Add visual feedback to the dropdown
-    if (genderFilterSelect) {
-        genderFilterSelect.classList.add('changed');
-        setTimeout(() => {
-            genderFilterSelect.classList.remove('changed');
-        }, 1000);
-    }
-    
-    // Log the filter being applied
-    console.log("Applying gender filter:", genderFilter);
-    
-    // Set the filter if socket is available
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-            action: 'set_filter',
-            filter: {
-                gender: genderFilter
-            }
-        }));
-        
-        // Get new performers with the applied filter
-        socket.send(JSON.stringify({
-            action: 'next_pair'
-        }));
-    } else {
-        console.warn("WebSocket not available, using AJAX fallback");
-        ajaxGetPerformers(genderFilter);
-    }
-}
-
-function displayPreferences(preferences) {
-    // Show results container
-    document.getElementById('game-container').classList.add('hidden');
-    document.getElementById('results-container').classList.remove('hidden');
-    
-    const preferencesContainer = document.getElementById('preferences-data');
-    preferencesContainer.innerHTML = '';
-    
-    // Display preferences data
-    const preferenceSections = [
-        { key: 'gender', title: 'Gender' },
-        { key: 'ethnicity', title: 'Ethnicity' },
-        { key: 'hair_color', title: 'Hair Color' },
-        { key: 'eye_color', title: 'Eye Color' },
-        { key: 'cup_size', title: 'Cup Size' }
-    ];
-    
-    // Loop through and display categorical preferences
-    preferenceSections.forEach(section => {
-        if (preferences[section.key] && Object.keys(preferences[section.key]).length > 0) {
-            const topValue = Object.keys(preferences[section.key])[0];
-            const percent = Math.round((preferences[section.key][topValue] / choiceCount) * 100);
-            
-            const el = document.createElement('div');
-            el.className = 'preference-item bg-darkPrimairy p-4 rounded-lg';
-            el.innerHTML = `
-                <h3 class="font-semibold text-xl">${section.title}</h3>
-                <p class="text-2xl font-bold text-secondary">${topValue}</p>
-                <p class="text-sm opacity-80">${percent}% of your choices</p>
-            `;
-            preferencesContainer.appendChild(el);
-        }
-    });
-    
-    // Display numeric and boolean preferences
-    if (preferences.fake_boobs !== undefined) {
-        const el = document.createElement('div');
-        el.className = 'preference-item bg-darkPrimairy p-4 rounded-lg';
-        el.innerHTML = `
-            <h3 class="font-semibold text-xl">Fake Boobs</h3>
-            <p class="text-2xl font-bold text-secondary">${preferences.fake_boobs}%</p>
-            <p class="text-sm opacity-80">Preference for enhanced</p>
-        `;
-        preferencesContainer.appendChild(el);
-    }
-    
-    if (preferences.height) {
-        const el = document.createElement('div');
-        el.className = 'preference-item bg-darkPrimairy p-4 rounded-lg';
-        el.innerHTML = `
-            <h3 class="font-semibold text-xl">Average Height</h3>
-            <p class="text-2xl font-bold text-secondary">${preferences.height} cm</p>
-            <p class="text-sm opacity-80">Of your choices</p>
-        `;
-        preferencesContainer.appendChild(el);
-    }
-}
-
-// Fallback mode when WebSocket is not available
-function showFallbackMode() {
-    console.log("Switching to fallback mode using AJAX");
-    
-    // Show a notification to the user
-    const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-secondary text-white p-4 rounded-lg shadow-lg z-50';
-    notification.innerHTML = `
-        <p>Using alternative connection method...</p>
-        <button class="ml-2 font-bold" onclick="this.parentNode.remove()">×</button>
-    `;
-    document.body.appendChild(notification);
-    
-    // Set timeout to remove the notification
-    setTimeout(() => {
-        if (notification.parentNode) {
-            notification.remove();
-        }
-    }, 5000);
-    
-    // First test the API
-    fetch('/api/test.php')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log("API test successful:", data);
-            // API is working, proceed with loading performers
-            ajaxGetPerformers();
-            
-            // Replace WebSocket-specific event handlers with AJAX versions
-            document.querySelectorAll('.smash-button').forEach(button => {
-                button.removeEventListener('click', null);
-                button.addEventListener('click', function() {
-                    const option = this.getAttribute('data-option');
-                    if (option === 'a') {
-                        ajaxSaveChoice(currentPerformers.a.id, currentPerformers.b.id);
-                    } else if (option === 'b') {
-                        ajaxSaveChoice(currentPerformers.b.id, currentPerformers.a.id);
-                    }
-                });
-            });
-            
-            const passBothBtn = document.getElementById('pass-both');
-            if (passBothBtn) {
-                passBothBtn.removeEventListener('click', null);
-                passBothBtn.addEventListener('click', function() {
-                    ajaxGetPerformers();
-                });
-            }
-            
-            // Add auto-apply filter logic for gender select
-            const genderFilterSelect = document.getElementById('gender-filter');
-            if (genderFilterSelect) {
-                genderFilterSelect.removeEventListener('change', null);
-                genderFilterSelect.addEventListener('change', function() {
-                    const genderFilter = this.value;
-                    ajaxGetPerformers(genderFilter);
-                });
-            }
-            
-            const applyFiltersBtn = document.getElementById('apply-filters');
-            if (applyFiltersBtn) {
-                applyFiltersBtn.removeEventListener('click', null);
-                applyFiltersBtn.addEventListener('click', function() {
-                    const genderFilter = document.getElementById('gender-filter').value;
-                    ajaxGetPerformers(genderFilter);
-                });
-            }
-            
-            const viewPreferencesBtn = document.getElementById('view-preferences');
-            if (viewPreferencesBtn) {
-                viewPreferencesBtn.removeEventListener('click', null);
-                viewPreferencesBtn.addEventListener('click', function() {
-                    ajaxGetPreferences().then(() => {
-                        document.getElementById('game-container').classList.add('hidden');
-                        document.getElementById('results-container').classList.remove('hidden');
-                    });
-                });
-            }
-            
-            const continuePlayingBtn = document.getElementById('continue-playing');
-            if (continuePlayingBtn) {
-                continuePlayingBtn.removeEventListener('click', null);
-                continuePlayingBtn.addEventListener('click', function() {
-                    document.getElementById('results-container').classList.add('hidden');
-                    document.getElementById('game-container').classList.remove('hidden');
-                });
-            }
-        })
-        .catch(error => {
-            console.error("API test failed:", error);
-            // API is not working, show error message
-            document.getElementById('game-container').innerHTML = `
-                <div class="bg-primairy rounded-lg p-6 shadow-lg text-center">
-                    <h2 class="text-2xl font-bold mb-4">Connection Error</h2>
-                    <p class="mb-4">We're having trouble connecting to the server.</p>
-                    <p class="mb-4">Error: ${error.message}</p>
-                    <button id="refresh-page" class="bg-gradient-to-r from-secondary to-tertery text-white px-6 py-3 rounded-lg hover:opacity-90 transition">
-                        Refresh Page
-                    </button>
-                </div>
-            `;
-            
-            document.getElementById('refresh-page').addEventListener('click', function() {
-                window.location.reload();
-            });
-        });
-}
-
-// AJAX fallback methods when WebSocket isn't available
-function ajaxGetPerformers(gender = null) {
-    // Construct the URL with proper query parameters
-    let url = `/api/performers.php?action=random_performers`;
-    if (gender) {
-        url += `&gender=${encodeURIComponent(gender)}`;
-    }
-    
-    console.log("Fetching performers from:", url);
-    
-    return fetch(url)
-        .then(response => {
-            console.log("Response status:", response.status);
-            console.log("Response headers:", response.headers);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error ${response.status}`);
-            }
-            
-            // Check content type
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('text/html')) {
-                // If we received HTML instead of JSON, try the fallback image API
-                return {
-                    type: 'performers',
-                    performers: [
-                        {
-                            id: 'fallback-1',
-                            name: 'Model A',
-                            gender: 'Female',
-                            ethnicity: 'Caucasian',
-                            height: '170 cm',
-                            images: ['/api/create_placeholder.php?id=1']
-                        },
-                        {
-                            id: 'fallback-2',
-                            name: 'Model B',
-                            gender: 'Female',
-                            ethnicity: 'Caucasian',
-                            height: '175 cm',
-                            images: ['/api/create_placeholder.php?id=2']
-                        }
-                    ],
-                    fallback_mode: true
-                };
-            }
-            
-            return response.json();
-        })
-        .then(data => {
-            console.log("Received performer data:", data);
-            if (data.type === 'performers') {
-                displayPerformers(data.performers);
-                
-                if (data.fallback_mode) {
-                    console.log("Using fallback data mode");
-                    showFallbackNotification();
-                }
-            }
-            return data;
-        })
-        .catch(error => {
-            console.error("Error fetching performers:", error);
-            // Display error message to user
-            document.getElementById('game-container').innerHTML = `
-                <div class="bg-primairy rounded-lg p-6 shadow-lg text-center">
-                    <h2 class="text-2xl font-bold mb-4">Failed to Load Performers</h2>
-                    <p class="mb-4">We're having trouble connecting to the server.</p>
-                    <p class="mb-4">Error: ${error.message}</p>
-                    <button id="try-again" class="bg-gradient-to-r from-secondary to-tertery text-white px-6 py-3 rounded-lg hover:opacity-90 transition">
-                        Try Again
-                    </button>
-                </div>
-            `;
-            
-            document.getElementById('try-again').addEventListener('click', function() {
-                ajaxGetPerformers(gender);
-            });
-        });
-}
-
-function showFallbackNotification() {
-    const notification = document.createElement('div');
-    notification.className = 'fixed bottom-4 left-4 bg-secondary text-white p-4 rounded-lg shadow-lg z-50';
-    notification.innerHTML = `
-        <p>Using demo mode with placeholder data.</p>
-        <button class="ml-2 font-bold" onclick="this.parentNode.remove()">×</button>
-    `;
-    document.body.appendChild(notification);
-    
-    // Remove after 5 seconds
-    setTimeout(() => {
-        if (notification.parentNode) {
-            notification.remove();
-        }
-    }, 5000);
-}
-
-function ajaxSaveChoice(chosenId, rejectedId) {
-    return fetch('/api/performers.php?action=save_choice', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            chosen_id: chosenId,
-            rejected_id: rejectedId
-        }),
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP error ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(() => {
-        // Update choice count and progress bar
-        choiceCount++;
-        document.getElementById('choice-count').textContent = choiceCount;
-        
-        // Update progress bar (max out at 100%)
-        // Change multiplier from 2 to 1 to increment progress by 1% per choice
-        const progressPercent = Math.min(choiceCount, 100);
-        document.getElementById('progress-bar').style.width = progressPercent + '%';
-        
-        // Get next performers
-        return ajaxGetPerformers();
-    })
-    .catch(error => {
-        console.error("Error saving choice:", error);
-    });
-}
-
-function ajaxGetPreferences() {
-    return fetch('/api/performers.php?action=get_preferences')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.type === 'preferences') {
-                displayPreferences(data.preferences);
-            }
-            return data;
-        })
-        .catch(error => {
-            console.error("Error fetching preferences:", error);
-        });
-}

@@ -37,9 +37,16 @@
 <!-- Common JavaScript -->
 <script src="/assets/js/utils/cache.js"></script>
 
-<!-- Page-specific scripts -->
+<!-- WebSocket Manager (load this first for pages that need it) -->
 <?php 
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
+if ($currentPage === 'index') {
+    echo '<script src="/assets/js/utils/websocket.js"></script>';
+}
+?>
+
+<!-- Page-specific scripts -->
+<?php 
 if (file_exists(dirname($_SERVER['DOCUMENT_ROOT']) . "/public/assets/js/{$currentPage}Page/script.js")) {
     echo "<script src=\"/assets/js/{$currentPage}Page/script.js\"></script>";
 }
@@ -51,5 +58,4 @@ if (file_exists(dirname($_SERVER['DOCUMENT_ROOT']) . "/public/assets/js/{$curren
     document.addEventListener('DOMContentLoaded', function() {
         console.log('Page loaded successfully!');
     });
-
 </script>

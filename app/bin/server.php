@@ -12,6 +12,9 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 $dotenv = Dotenv\Dotenv::createImmutable(dirname(__DIR__));
 $dotenv->load();
 
+// Load config
+require_once dirname(__DIR__) . '/config/config.php';
+
 // Database connection
 $dsn = "mysql:host=" . getenv('DB_HOST') . ";dbname=" . getenv('DB_NAME') . ";charset=" . getenv('DB_CHARSET');
 $options = [
@@ -26,6 +29,9 @@ try {
     // Database functions for SmashOrPass
     $dbFunctions = new DatabaseFunctions($pdo);
     
+    // Get WebSocket port from configuration
+    $wsPort = isset($wsConfig['port']) ? (int)$wsConfig['port'] : 8080;
+    
     // Create WebSocket server
     $server = IoServer::factory(
         new HttpServer(
@@ -33,10 +39,10 @@ try {
                 new SmashOrPassServer($dbFunctions)
             )
         ),
-        8080  // This port is internal within the container, no need to change
+        $wsPort  // Use port from configuration
     );
 
-    echo "WebSocket server started on port 8080\n";
+    echo "WebSocket server started on port {$wsPort}\n";
     $server->run();
     
 } catch (PDOException $e) {

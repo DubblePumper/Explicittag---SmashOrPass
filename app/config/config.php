@@ -40,6 +40,16 @@ define('LOGS_PATH', STORAGE_PATH . '/logs');
 // Environment settings (development, staging, production)
 $environment = getenv('APP_ENV') ?: 'development';
 
+// Add WebSocket configuration
+$wsConfig = [
+    'protocol' => $environment === 'production' ? 'wss' : 'ws',
+    'host' => getenv('WS_HOST') ?: 'localhost',
+    'port' => getenv('WS_PORT') ?: 8080,
+    'path' => getenv('WS_PATH') ?: '',
+    'enabled' => (getenv('WS_ENABLED') === 'true') || true,
+    'fallback_endpoint' => '/api/performers.php'
+];
+
 // Database configuration
 $dbConfig = [
     'host' => getenv('DB_HOST'),
