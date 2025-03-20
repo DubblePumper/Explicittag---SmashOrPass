@@ -32,13 +32,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     let isProcessingChoice = false; // Flag to prevent multiple rapid choices
     let blurEnabled = localStorage.getItem('blurEnabled') !== 'false'; // Default to enabled
     
+    // Additional game state for preloading
+    let preloadedPerformers = [];
+    let preloadedImages = {};
+    let performerHistory = []; // Track performers already seen
+    
     // Initialize blur state
     updateBlurState();
     
     // Load the WebSocket manager script and initialize it
     await loadWebSocketManager();
     
-    // Initialize WebSocket and fetch first performers
+    // Initialize the game with preloading
     await initGame();
     
     /**
@@ -198,20 +203,33 @@ document.addEventListener('DOMContentLoaded', async function() {
         try {
             isProcessingChoice = true;
             
+            // Store current performers in history to avoid showing again
+            performerHistory.push(chosenId, rejectedId);
+            
+            // Keep history at a reasonable size
+            if (performerHistory.length > 100) {
+                performerHistory = performerHistory.slice(-100);
+            }
+            
             // Add UI feedback - optional styling to indicate processing
             const buttons = document.querySelectorAll('.smash-button, #pass-both');
             buttons.forEach(btn => btn.classList.add('opacity-50'));
             
+            // Current filter for tracking
+            const currentFilter = { gender: genderFilter.value };
+            
             // Send choice via WebSocket or AJAX fallback
+            let response;
             if (window.wsManager) {
-                await wsManager.send({
+                response = await wsManager.send({
                     action: 'choice',
                     chosen_id: chosenId,
-                    rejected_id: rejectedId
+                    rejected_id: rejectedId,
+                    filter: currentFilter
                 });
             } else {
                 // Direct AJAX fallback if WebSocket manager isn't available
-                await fetch('/api/performers.php', {
+                const fetchResponse = await fetch('/api/performers.php', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -219,9 +237,11 @@ document.addEventListener('DOMContentLoaded', async function() {
                     body: JSON.stringify({
                         action: 'save_choice',
                         chosen_id: chosenId,
-                        rejected_id: rejectedId
+                        rejected_id: rejectedId,
+                        filter: currentFilter
                     })
                 });
+                response = await fetchResponse.json();
             }
             
             // Update UI state
@@ -229,17 +249,122 @@ document.addEventListener('DOMContentLoaded', async function() {
             choiceCount.textContent = userChoices;
             updateProgressBar();
             
-            // Fetch new performers
+            // If we received next batch in response, preload those images
+            if (response && response.next_batch && response.next_batch.length > 0) {
+                console.log('Preloading next batch of performers:', response.next_batch);
+                preloadPerformers(response.next_batch);
+                
+                // If we have preloaded performers, use the next 2 for display
+                if (preloadedPerformers.length >= 2) {
+                    const nextPerformers = preloadedPerformers.splice(0, 2);
+                    displayPerformers({ performers: nextPerformers });
+                    
+                    // If our preloaded cache is running low, fetch more
+                    if (preloadedPerformers.length < 2) {
+                        requestNextBatch();
+                    }
+                    
+                    // Remove UI feedback
+                    buttons.forEach(btn => btn.classList.remove('opacity-50'));
+                    isProcessingChoice = false;
+                    return;
+                }
+            }
+            
+            // If no preloaded performers or next_batch, fetch new performers
             await fetchPerformers();
+            
         } catch (error) {
             console.error('Error making choice:', error);
             setErrorState('Failed to save your choice. Please try again.');
         } finally {
-            isProcessingChoice = false;
+            if (isProcessingChoice) {
+                isProcessingChoice = false;
+                
+                // Remove UI feedback
+                const buttons = document.querySelectorAll('.smash-button, #pass-both');
+                buttons.forEach(btn => btn.classList.remove('opacity-50'));
+            }
+        }
+    }
+    
+    /**
+     * Preload performers and their images
+     * @param {Array} performers Array of performer objects to preload
+     */
+    function preloadPerformers(performers) {
+        if (!performers || performers.length === 0) return;
+        
+        // Filter out performers we've already seen
+        const newPerformers = performers.filter(p => 
+            !performerHistory.includes(p.id) && 
+            !preloadedPerformers.some(pp => pp.id === p.id)
+        );
+        
+        // Add to preload queue
+        preloadedPerformers.push(...newPerformers);
+        
+        // Preload all images
+        newPerformers.forEach(performer => {
+            if (performer.images && performer.images.length > 0) {
+                performer.images.forEach(imageUrl => {
+                    if (!preloadedImages[imageUrl]) {
+                        preloadedImages[imageUrl] = new Image();
+                        preloadedImages[imageUrl].src = imageUrl;
+                        preloadedImages[imageUrl].onload = () => {
+                            console.log(`Preloaded image: ${imageUrl}`);
+                        };
+                        preloadedImages[imageUrl].onerror = () => {
+                            console.error(`Failed to preload image: ${imageUrl}`);
+                            // Use placeholder for failed images
+                            performer.images = ['/assets/images/placeholder-profile.jpg'];
+                        };
+                    }
+                });
+            }
+        });
+    }
+    
+    /**
+     * Request next batch of performers for preloading
+     */
+    async function requestNextBatch() {
+        try {
+            // Get current gender filter
+            const gender = genderFilter.value;
             
-            // Remove UI feedback
-            const buttons = document.querySelectorAll('.smash-button, #pass-both');
-            buttons.forEach(btn => btn.classList.remove('opacity-50'));
+            // Request next batch
+            if (window.wsManager) {
+                wsManager.send({
+                    action: 'preload_next_batch',
+                    filter: { gender }
+                }).then(response => {
+                    if (response && response.performers) {
+                        preloadPerformers(response.performers);
+                    }
+                }).catch(error => {
+                    console.error('Error preloading next batch:', error);
+                });
+            } else {
+                // Direct AJAX fallback
+                let url = '/api/performers.php?action=preload_next_batch';
+                if (gender) {
+                    url += `&gender=${encodeURIComponent(gender)}`;
+                }
+                
+                fetch(url)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data && data.performers) {
+                            preloadPerformers(data.performers);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error preloading next batch:', error);
+                    });
+            }
+        } catch (error) {
+            console.error('Error requesting next batch:', error);
         }
     }
     
@@ -273,6 +398,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         } finally {
             setLoadingState(false);
         }
+        
+        // Clear preloaded performers when filter changes
+        preloadedPerformers = [];
     }
     
     /**
@@ -282,6 +410,20 @@ document.addEventListener('DOMContentLoaded', async function() {
         try {
             // Show loading state
             setLoadingState(true);
+            
+            // If we have enough preloaded performers, use them instead of fetching
+            if (preloadedPerformers.length >= 2 && !filters) {
+                const nextPerformers = preloadedPerformers.splice(0, 2);
+                displayPerformers({ performers: nextPerformers });
+                
+                // If our preloaded cache is running low, fetch more in background
+                if (preloadedPerformers.length < 4) {
+                    requestNextBatch();
+                }
+                
+                setLoadingState(false);
+                return;
+            }
             
             // Get current gender filter if not provided
             if (!filters && genderFilter) {
@@ -313,7 +455,13 @@ document.addEventListener('DOMContentLoaded', async function() {
             
             // Process the response
             if (response && response.performers && response.performers.length >= 2) {
-                handlePerformersData(response);
+                displayPerformers(response);
+                
+                // If there's a next batch, preload those images
+                if (response.next_batch && response.next_batch.length > 0) {
+                    console.log('Preloading next batch of performers:', response.next_batch);
+                    preloadPerformers(response.next_batch);
+                }
             } else {
                 console.error('Invalid response data:', response);
                 setErrorState('Could not load performers. Please try again or change your filters.');
@@ -324,6 +472,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         } finally {
             setLoadingState(false);
         }
+    }
+    
+    /**
+     * Display performers without fetching new ones
+     */
+    function displayPerformers(data) {
+        handlePerformersData(data);
     }
     
     /**
@@ -461,13 +616,39 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Clear previous preferences data
         preferencesData.innerHTML = '';
         
+        // Add a summary banner of top preferences
+        if (userChoices > 5) {
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'bg-primairy/30 rounded-lg p-4 mb-6 w-full col-span-full text-center';
+            
+            const topGender = getTopPreference(preferences.gender);
+            const topEthnicity = getTopPreference(preferences.ethnicity);
+            
+            let summaryText = `Your ideal performer: `;
+            
+            if (topGender) {
+                summaryText += topGender;
+            }
+            
+            if (topEthnicity) {
+                summaryText += topGender ? `, ${topEthnicity}` : topEthnicity;
+            }
+            
+            if (preferences.height) {
+                summaryText += `, ${preferences.height}cm tall`;
+            }
+            
+            summaryDiv.innerHTML = `<p class="text-xl font-semibold">${summaryText}</p>`;
+            preferencesData.appendChild(summaryDiv);
+        }
+        
         // Helper function to create preference cards
         const createPreferenceCard = (title, content) => {
             const card = document.createElement('div');
-            card.className = 'bg-darkPrimairy rounded-lg p-4 shadow';
+            card.className = 'bg-darkPrimairy rounded-lg p-4 shadow hover:shadow-lg transition-shadow duration-300';
             
             const titleEl = document.createElement('h3');
-            titleEl.className = 'text-lg font-semibold mb-2 text-secondary';
+            titleEl.className = 'text-lg font-semibold mb-3 text-secondary';
             titleEl.textContent = title;
             
             const contentEl = document.createElement('div');
@@ -495,7 +676,15 @@ document.addEventListener('DOMContentLoaded', async function() {
                 
                 sorted.forEach(([value, count]) => {
                     const percentage = Math.round((count / total) * 100);
-                    content += `<li>${value} <span class="text-gray-400">(${percentage}%)</span></li>`;
+                    const progressBar = `
+                        <div class="w-full bg-BgDark rounded-full h-2 mt-1 mb-2">
+                            <div class="bg-gradient-to-r from-secondary to-tertery h-2 rounded-full" style="width: ${percentage}%"></div>
+                        </div>
+                    `;
+                    content += `<li class="mb-2">
+                        <span class="font-medium">${value}</span> <span class="text-gray-400">(${percentage}%)</span>
+                        ${progressBar}
+                    </li>`;
                 });
                 
                 content += '</ul>';
@@ -510,13 +699,16 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Process numerical preferences (height, weight)
         ['height', 'weight'].forEach(attr => {
             if (preferences[attr]) {
-                let content = `<p class="text-center text-xl">${preferences[attr]}`;
+                const unit = attr === 'height' ? ' cm' : ' kg';
                 
-                // Add units
-                if (attr === 'height') content += ' cm';
-                if (attr === 'weight') content += ' kg';
-                
-                content += '</p>';
+                // Create a visual representation
+                let content = `
+                    <div class="flex flex-col items-center">
+                        <div class="text-3xl font-bold mb-2">${preferences[attr]}${unit}</div>
+                        <div class="text-sm text-gray-400">Based on your choices</div>
+                        ${attr === 'height' ? createHeightVisualization(preferences[attr]) : ''}
+                    </div>
+                `;
                 
                 const title = attr.charAt(0).toUpperCase() + attr.slice(1);
                 preferencesData.appendChild(createPreferenceCard(title, content));
@@ -526,9 +718,61 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Process boolean preferences (fake_boobs)
         if ('fake_boobs' in preferences) {
             const percentage = preferences.fake_boobs;
-            let content = `<p class="text-center text-xl">${percentage}%</p>`;
+            let content = `
+                <div class="flex flex-col items-center">
+                    <div class="w-36 h-36 relative mb-4">
+                        <div class="absolute inset-0 rounded-full bg-BgDark"></div>
+                        <svg class="absolute inset-0" viewBox="0 0 36 36">
+                            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                fill="none" stroke-width="3" stroke-dasharray="${percentage}, 100"
+                                stroke="url(#gradient)" stroke-linecap="round" />
+                            <defs>
+                                <linearGradient id="gradient">
+                                    <stop offset="0%" stop-color="#40a6ea" />
+                                    <stop offset="100%" stop-color="#9d65ea" />
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <span class="text-3xl font-bold">${percentage}%</span>
+                        </div>
+                    </div>
+                    <div class="text-center">
+                        ${percentage > 50 ? 'You prefer enhanced' : 'You prefer natural'}
+                    </div>
+                </div>`;
             preferencesData.appendChild(createPreferenceCard('Fake Boobs Preference', content));
         }
+    }
+    
+    /**
+     * Get the top preference from a preference object
+     */
+    function getTopPreference(prefObj) {
+        if (!prefObj || Object.keys(prefObj).length === 0) return null;
+        return Object.entries(prefObj).sort((a, b) => b[1] - a[1])[0][0];
+    }
+    
+    /**
+     * Create a visual representation of height
+     */
+    function createHeightVisualization(height) {
+        const heightInCm = parseInt(height);
+        if (isNaN(heightInCm)) return '';
+        
+        // Scale factor (max height 200cm would be 100px tall)
+        const scale = 0.5;
+        const visualHeight = heightInCm * scale;
+        
+        return `
+            <div class="relative mt-4 mb-2 flex items-end h-[100px]">
+                <div class="w-6 bg-gradient-to-t from-secondary to-tertery rounded-t" style="height: ${visualHeight}px"></div>
+                <div class="ml-4 text-sm absolute bottom-0 transform -translate-y-4">
+                    Average person (170cm)
+                    <div class="absolute bottom-[85px] w-16 border-t border-dashed border-gray-400"></div>
+                </div>
+            </div>
+        `;
     }
     
     // Helper functions

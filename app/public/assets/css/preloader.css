@@ -1,3 +1,4 @@
+/* Main preloader */
 #preloader {
     position: fixed;
     top: 0;
@@ -12,20 +13,65 @@
     transition: opacity 0.5s ease;
 }
 
-#preloader.fade-out {
-    opacity: 0;
-}
-
 .spinner {
     width: 40px;
     height: 40px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-top: 4px solid #40a6ea;
     border-radius: 50%;
-    border: 4px solid rgba(64, 166, 234, 0.1);
-    border-top-color: #40a6ea;
-    animation: spin 1s infinite linear;
+    animation: spin 1s linear infinite;
 }
 
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+.fade-out {
+    opacity: 0;
+}
+
+/* Image preloading container - hidden but loads images */
+#preload-container {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Loading indicator for performer cards */
+.performer-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(13, 13, 13, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+}
+
+.performer-loading .spinner {
+    width: 30px;
+    height: 30px;
+    border-width: 3px;
+}
+
+/* Loading state transition */
+.performer-card {
+    position: relative;
+}
+
+.performer-card.loading .performer-loading {
+    opacity: 1;
+}
+
+.performer-card:not(.loading) .performer-loading {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
 }

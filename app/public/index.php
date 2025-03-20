@@ -137,6 +137,9 @@ $pageDescription = "Play Smash or Pass to find your ideal performer based on you
                 <div id="progress-bar" class="h-full bg-gradient-to-r from-secondary to-tertery" style="width: 0%"></div>
             </div>
         </div>
+        
+        <!-- Hidden container for preloading images -->
+        <div id="preload-container" aria-hidden="true"></div>
     </main>
     
     <?php include_once BASE_PATH . '/src/includes/scripts.php'; ?>
