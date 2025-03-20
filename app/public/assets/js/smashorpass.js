@@ -22,12 +22,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     const choiceCount = document.getElementById('choice-count');
     const progressBar = document.getElementById('progress-bar');
     const genderFilter = document.getElementById('gender-filter');
+    const blurToggle = document.getElementById('blur-toggle');
+    const blurToggleHandle = document.getElementById('blur-toggle-handle');
     
     // Game state
     let currentPerformers = [];
     let userChoices = 0;
     let gameActive = true;
     let isProcessingChoice = false; // Flag to prevent multiple rapid choices
+    let blurEnabled = localStorage.getItem('blurEnabled') !== 'false'; // Default to enabled
+    
+    // Initialize blur state
+    updateBlurState();
     
     // Load the WebSocket manager script and initialize it
     await loadWebSocketManager();
@@ -101,6 +107,13 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Event listeners
     
+    // Handle blur toggle
+    blurToggle.addEventListener('click', function() {
+        blurEnabled = !blurEnabled;
+        localStorage.setItem('blurEnabled', blurEnabled);
+        updateBlurState();
+    });
+    
     // Handle smash button click
     smashButtons.forEach(button => {
         button.addEventListener('click', function() {
@@ -152,6 +165,26 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
     
     // Core game functions
+    
+    /**
+     * Update blur state based on user preference
+     */
+    function updateBlurState() {
+        // Update the toggle button appearance
+        if (blurEnabled) {
+            blurToggle.classList.add('bg-tertery');
+            blurToggle.classList.remove('bg-BgDark');
+            blurToggleHandle.classList.add('translate-x-6');
+            blurToggleHandle.classList.remove('translate-x-1');
+            document.body.classList.remove('blur-disabled');
+        } else {
+            blurToggle.classList.remove('bg-tertery');
+            blurToggle.classList.add('bg-BgDark');
+            blurToggleHandle.classList.remove('translate-x-6');
+            blurToggleHandle.classList.add('translate-x-1');
+            document.body.classList.add('blur-disabled');
+        }
+    }
     
     /**
      * Make a choice between performers
@@ -353,6 +386,20 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.log('Setting image A to:', imageUrl);
             performerAImage.src = imageUrl;
             performerAImage.alt = currentPerformers[0].name || 'Performer A';
+            
+            // Pre-load image to get its dimensions
+            const img = new Image();
+            img.onload = function() {
+                // Add appropriate class based on image dimensions
+                if (img.height > img.width) {
+                    performerAImage.classList.add('max-h-96');
+                    performerAImage.classList.remove('max-w-full');
+                } else {
+                    performerAImage.classList.add('max-w-full');
+                    performerAImage.classList.remove('max-h-96');
+                }
+            };
+            img.src = imageUrl;
         } else {
             performerAImage.src = '/assets/images/placeholder-profile.jpg';
         }
@@ -374,6 +421,20 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.log('Setting image B to:', imageUrl);
             performerBImage.src = imageUrl;
             performerBImage.alt = currentPerformers[1].name || 'Performer B';
+            
+            // Pre-load image to get its dimensions
+            const img = new Image();
+            img.onload = function() {
+                // Add appropriate class based on image dimensions
+                if (img.height > img.width) {
+                    performerBImage.classList.add('max-h-96');
+                    performerBImage.classList.remove('max-w-full');
+                } else {
+                    performerBImage.classList.add('max-w-full');
+                    performerBImage.classList.remove('max-h-96');
+                }
+            };
+            img.src = imageUrl;
         } else {
             performerBImage.src = '/assets/images/placeholder-profile.jpg';
         }

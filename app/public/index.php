@@ -33,7 +33,18 @@ $pageDescription = "Play Smash or Pass to find your ideal performer based on you
         <!-- Filters Section -->
         <div class="mb-8">
             <div class="bg-primairy rounded-lg p-4 shadow-lg">
-                <h3 class="text-xl font-semibold mb-4">Gender Preference</h3>
+                <div class="flex flex-wrap justify-between items-center mb-4">
+                    <h3 class="text-xl font-semibold">Gender Preference</h3>
+                    
+                    <!-- Blur Toggle Button -->
+                    <div class="flex items-center space-x-2">
+                        <span class="text-sm text-gray-300">Blur Images</span>
+                        <button id="blur-toggle" class="relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-secondary focus:ring-offset-2 focus:ring-offset-darkPrimairy bg-BgDark" role="switch" aria-checked="true">
+                            <span id="blur-toggle-handle" class="inline-block w-4 h-4 transform transition-transform bg-tertery rounded-full translate-x-6"></span>
+                        </button>
+                    </div>
+                </div>
+                
                 <div class="flex flex-wrap gap-4">
                     <div class="form-group w-full">
                         <select id="gender-filter" class="bg-darkPrimairy text-TextWhite rounded px-3 py-2 w-full">
@@ -59,8 +70,10 @@ $pageDescription = "Play Smash or Pass to find your ideal performer based on you
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <!-- Left Performer (Option A) -->
                 <div id="performer-a" class="performer-card bg-primairy rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition duration-300" data-performer-id="">
-                    <div class="relative">
-                        <img id="performer-a-image" src="/assets/images/placeholder-profile.jpg" alt="Performer A" class="w-full h-96 object-cover">
+                    <div class="relative flex flex-col items-center bg-darkPrimairy">
+                        <div class="w-full h-96 flex items-center justify-center">
+                            <img id="performer-a-image" src="/assets/images/placeholder-profile.jpg" alt="Performer A" class="max-h-full max-w-full object-contain transition-all duration-300 blur-image group-hover:blur-none">
+                        </div>
                         <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-primairy to-transparent p-4">
                             <h3 id="performer-a-name" class="text-2xl font-bold text-TextWhite">Loading...</h3>
                             <p id="performer-a-details" class="text-TextWhite opacity-90">Loading performer details...</p>
@@ -75,8 +88,10 @@ $pageDescription = "Play Smash or Pass to find your ideal performer based on you
                 
                 <!-- Right Performer (Option B) -->
                 <div id="performer-b" class="performer-card bg-primairy rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition duration-300" data-performer-id="">
-                    <div class="relative">
-                        <img id="performer-b-image" src="/assets/images/placeholder-profile.jpg" alt="Performer B" class="w-full h-96 object-cover">
+                    <div class="relative flex flex-col items-center bg-darkPrimairy">
+                        <div class="w-full h-96 flex items-center justify-center">
+                            <img id="performer-b-image" src="/assets/images/placeholder-profile.jpg" alt="Performer B" class="max-h-full max-w-full object-contain transition-all duration-300 blur-image group-hover:blur-none">
+                        </div>
                         <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-primairy to-transparent p-4">
                             <h3 id="performer-b-name" class="text-2xl font-bold text-TextWhite">Loading...</h3>
                             <p id="performer-b-details" class="text-TextWhite opacity-90">Loading performer details...</p>

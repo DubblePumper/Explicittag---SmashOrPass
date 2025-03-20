@@ -41,6 +41,19 @@ header h1, header h2, header h3 {
     transform: scale(1.03);
 }
 
+/* Custom classes for blur functionality */
+.blur-image {
+  filter: blur(8px);
+}
+
+.performer-card:hover .blur-image {
+  filter: blur(0);
+}
+
+.blur-disabled .blur-image {
+  filter: blur(0) !important;
+}
+
 /* Preference item styles */
 .preference-item {
     padding: 1rem;
