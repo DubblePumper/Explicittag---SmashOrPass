@@ -6,16 +6,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Elements
     const gameContainer = document.getElementById('game-container');
     const resultsContainer = document.getElementById('results-container');
-    const performerACard = document.getElementById('performer-a');
-    const performerBCard = document.getElementById('performer-b');
-    const performerAImage = document.getElementById('performer-a-image');
-    const performerBImage = document.getElementById('performer-b-image');
-    const performerAName = document.getElementById('performer-a-name');
-    const performerBName = document.getElementById('performer-b-name');
-    const performerADetails = document.getElementById('performer-a-details');
-    const performerBDetails = document.getElementById('performer-b-details');
-    const smashButtons = document.querySelectorAll('.smash-button');
-    const passBothButton = document.getElementById('pass-both');
+    const currentPerformerCard = document.getElementById('current-performer');
+    const nextPerformerCard = document.getElementById('next-performer');
+    const performerImage = document.getElementById('performer-image');
+    const nextPerformerImage = document.getElementById('next-performer-image');
+    const performerName = document.getElementById('performer-name');
+    const nextPerformerName = document.getElementById('next-performer-name');
+    const performerDetails = document.getElementById('performer-details');
+    const nextPerformerDetails = document.getElementById('next-performer-details');
     const viewPreferencesButton = document.getElementById('view-preferences');
     const continuePlayingButton = document.getElementById('continue-playing');
     const preferencesData = document.getElementById('preferences-data');
@@ -24,45 +22,54 @@ document.addEventListener('DOMContentLoaded', async function() {
     const genderFilter = document.getElementById('gender-filter');
     const blurToggle = document.getElementById('blur-toggle');
     const blurToggleHandle = document.getElementById('blur-toggle-handle');
+    const swipeContainer = document.getElementById('performer-swipe-container');
+    const swipeLeftIndicator = document.getElementById('swipe-left-indicator');
+    const swipeRightIndicator = document.getElementById('swipe-right-indicator');
+    const passButton = document.getElementById('pass-button');
+    const smashButton = document.getElementById('smash-button');
     
     // Game state
-    let currentPerformers = [];
+    let currentPerformer = null;
+    let nextPerformer = null;
     let userChoices = 0;
     let gameActive = true;
-    let isProcessingChoice = false; // Flag to prevent multiple rapid choices
-    let blurEnabled = localStorage.getItem('blurEnabled') !== 'false'; // Default to enabled
+    let isProcessingChoice = false;
+    let blurEnabled = localStorage.getItem('blurEnabled') !== 'false';
     
-    // Additional game state for preloading
+    // Swipe state
+    let touchStartX = 0;
+    let touchEndX = 0;
+    let isDragging = false;
+    let currentTranslateX = 0;
+    
+    // Preloading optimization
     let preloadedPerformers = [];
-    let preloadedImages = {};
-    let performerHistory = []; // Track performers already seen
+    let preloadedImages = new Map(); // Using Map for better performance
+    let performerHistory = new Set(); // Using Set for faster lookups
+    let preloadBatchSize = 5; // Number of performers to preload at once
+    let minPreloadThreshold = 3; // When to trigger next preload
     
-    // Initialize blur state
+    // Initialize blur state and set up event listeners
     updateBlurState();
-    
-    // Load the WebSocket manager script and initialize it
     await loadWebSocketManager();
-    
-    // Initialize the game with preloading
     await initGame();
-    
+    setupSwipeListeners();
+    setupButtonListeners();
+
     /**
      * Load WebSocket Manager script
      */
     async function loadWebSocketManager() {
-        // Check if WebSocket manager is already loaded
         if (window.wsManager) {
             console.log('WebSocket manager already loaded');
             return;
         }
         
         return new Promise((resolve, reject) => {
-            // Create script element
             const script = document.createElement('script');
             script.src = '/assets/js/utils/websocket.js';
             script.async = true;
             
-            // Set up load and error handlers
             script.onload = () => {
                 console.log('WebSocket manager script loaded successfully');
                 resolve();
@@ -73,7 +80,6 @@ document.addEventListener('DOMContentLoaded', async function() {
                 reject(error);
             };
             
-            // Add script to document
             document.head.appendChild(script);
         });
     }
@@ -83,99 +89,266 @@ document.addEventListener('DOMContentLoaded', async function() {
      */
     async function initGame() {
         try {
-            // Initialize WebSocket (will automatically use AJAX fallback if needed)
             if (window.wsManager) {
                 await wsManager.init();
                 console.log('Attempting to connect to WebSocket on', wsManager.config?.url);
                 
-                // Set up WebSocket event listeners
                 wsManager.on('performers', handlePerformersData);
                 wsManager.on('preferences', handlePreferencesData);
                 wsManager.on('error', handleWebSocketError);
                 wsManager.on('connect', () => {
                     console.log('WebSocket connected successfully');
+                    requestNextBatch();
                 });
-                wsManager.on('fallback', (data) => {
-                    console.log('Using AJAX fallback due to:', data.reason);
-                });
-            } else {
-                console.error('WebSocket manager not available, will use direct AJAX fallback');
             }
             
-            // Load initial performers
             await fetchPerformers();
         } catch (error) {
             console.error('Error initializing game:', error);
             setErrorState('Failed to initialize the game. Please refresh the page and try again.');
         }
     }
-    
-    // Event listeners
-    
-    // Handle blur toggle
-    blurToggle.addEventListener('click', function() {
-        blurEnabled = !blurEnabled;
-        localStorage.setItem('blurEnabled', blurEnabled);
-        updateBlurState();
-    });
-    
-    // Handle smash button click
-    smashButtons.forEach(button => {
-        button.addEventListener('click', function() {
-            if (isProcessingChoice) return; // Prevent multiple rapid clicks
+
+    /**
+     * Set up swipe listeners for touch and mouse events
+     */
+    function setupSwipeListeners() {
+        swipeContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
+        swipeContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
+        swipeContainer.addEventListener('touchend', handleTouchEnd);
+
+        swipeContainer.addEventListener('mousedown', handleMouseDown);
+        swipeContainer.addEventListener('mousemove', handleMouseMove);
+        swipeContainer.addEventListener('mouseup', handleMouseUp);
+        swipeContainer.addEventListener('mouseleave', handleMouseUp);
+    }
+
+    /**
+     * Set up button listeners
+     */
+    function setupButtonListeners() {
+        passButton.addEventListener('click', () => makeChoice(false));
+        smashButton.addEventListener('click', () => makeChoice(true));
+        blurToggle.addEventListener('click', () => {
+            blurEnabled = !blurEnabled;
+            localStorage.setItem('blurEnabled', blurEnabled);
+            updateBlurState();
+        });
+        genderFilter.addEventListener('change', () => {
+            const gender = genderFilter.value;
+            applyFilters({ gender });
+        });
+        viewPreferencesButton.addEventListener('click', fetchPreferences);
+        continuePlayingButton.addEventListener('click', () => {
+            gameContainer.style.display = 'block';
+            resultsContainer.style.display = 'none';
+            gameActive = true;
+            if (!currentPerformer) {
+                fetchPerformers();
+            }
+        });
+    }
+
+    // Touch and mouse event handlers
+    function handleTouchStart(e) {
+        touchStartX = e.touches[0].clientX;
+        startDrag();
+    }
+
+    function handleTouchMove(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        touchEndX = e.touches[0].clientX;
+        updateSwipe();
+    }
+
+    function handleTouchEnd() {
+        if (!isDragging) return;
+        endDrag();
+    }
+
+    function handleMouseDown(e) {
+        touchStartX = e.clientX;
+        startDrag();
+    }
+
+    function handleMouseMove(e) {
+        if (!isDragging) return;
+        touchEndX = e.clientX;
+        updateSwipe();
+    }
+
+    function handleMouseUp() {
+        if (!isDragging) return;
+        endDrag();
+    }
+
+    function startDrag() {
+        if (isProcessingChoice) return;
+        isDragging = true;
+        currentPerformerCard.style.transition = 'none';
+    }
+
+    function updateSwipe() {
+        const deltaX = touchEndX - touchStartX;
+        currentTranslateX = deltaX;
+        
+        currentPerformerCard.style.transform = `translateX(${deltaX}px)`;
+        
+        const swipeThreshold = window.innerWidth * 0.3;
+        if (deltaX > swipeThreshold) {
+            swipeRightIndicator.style.opacity = '1';
+            swipeLeftIndicator.style.opacity = '0';
+        } else if (deltaX < -swipeThreshold) {
+            swipeLeftIndicator.style.opacity = '1';
+            swipeRightIndicator.style.opacity = '0';
+        } else {
+            swipeLeftIndicator.style.opacity = '0';
+            swipeRightIndicator.style.opacity = '0';
+        }
+    }
+
+    function endDrag() {
+        isDragging = false;
+        currentPerformerCard.style.transition = 'transform 0.3s ease-out';
+        
+        const swipeThreshold = window.innerWidth * 0.3;
+        if (currentTranslateX > swipeThreshold) {
+            makeChoice(true);
+        } else if (currentTranslateX < -swipeThreshold) {
+            makeChoice(false);
+        } else {
+            currentPerformerCard.style.transform = 'translateX(0)';
+        }
+        
+        swipeLeftIndicator.style.opacity = '0';
+        swipeRightIndicator.style.opacity = '0';
+        currentTranslateX = 0;
+    }
+
+    /**
+     * Make a choice for the current performer
+     * @param {boolean} isSmash True for smash, false for pass
+     */
+    async function makeChoice(isSmash) {
+        if (isProcessingChoice || !currentPerformer) return;
+        
+        try {
+            isProcessingChoice = true;
             
-            const option = this.getAttribute('data-option');
-            let chosenId, rejectedId;
+            performerHistory.add(currentPerformer.id);
             
-            if (option === 'a') {
-                chosenId = performerACard.getAttribute('data-performer-id');
-                rejectedId = performerBCard.getAttribute('data-performer-id');
+            const choiceData = {
+                action: 'choice',
+                chosen_id: isSmash ? currentPerformer.id : null,
+                rejected_id: isSmash ? null : currentPerformer.id,
+                filter: { gender: genderFilter.value }
+            };
+            
+            const direction = isSmash ? 1 : -1;
+            currentPerformerCard.style.transform = `translateX(${direction * window.innerWidth}px)`;
+            
+            let response;
+            if (window.wsManager && wsManager.isWebSocketAvailable()) {
+                response = await wsManager.send(choiceData);
             } else {
-                chosenId = performerBCard.getAttribute('data-performer-id');
-                rejectedId = performerACard.getAttribute('data-performer-id');
+                response = await fetch('/api/performers.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(choiceData)
+                }).then(r => r.json());
             }
             
-            makeChoice(chosenId, rejectedId);
-        });
-    });
-    
-    // Handle pass both button click
-    passBothButton.addEventListener('click', function() {
-        if (isProcessingChoice) return;
-        fetchPerformers();
-    });
-    
-    // Handle view preferences button click
-    viewPreferencesButton.addEventListener('click', function() {
-        fetchPreferences();
-    });
-    
-    // Handle continue playing button click
-    continuePlayingButton.addEventListener('click', function() {
-        gameContainer.style.display = 'block';
-        resultsContainer.style.display = 'none';
-        gameActive = true;
-        
-        // If we don't have performers loaded, fetch new ones
-        if (currentPerformers.length < 2) {
-            fetchPerformers();
+            userChoices++;
+            choiceCount.textContent = userChoices;
+            updateProgressBar();
+            
+            await showNextPerformer();
+            
+            if (preloadedPerformers.length < minPreloadThreshold) {
+                requestNextBatch();
+            }
+            
+        } catch (error) {
+            console.error('Error making choice:', error);
+            setErrorState('Failed to save your choice. Please try again.');
+        } finally {
+            isProcessingChoice = false;
         }
-    });
-    
-    // Handle gender filter change
-    genderFilter.addEventListener('change', function() {
-        const gender = this.value;
-        console.log('Applying gender filter:', gender);
-        applyFilters({ gender });
-    });
-    
-    // Core game functions
-    
+    }
+
     /**
-     * Update blur state based on user preference
+     * Show the next performer with animation
      */
+    async function showNextPerformer() {
+        currentPerformerCard.style.transition = 'none';
+        currentPerformerCard.style.transform = 'translateX(-100%)';
+        
+        if (preloadedPerformers.length > 0) {
+            currentPerformer = preloadedPerformers.shift();
+        } else {
+            await fetchPerformers();
+            return;
+        }
+        
+        updatePerformerCard(currentPerformerCard, performerImage, performerName, performerDetails, currentPerformer);
+        
+        requestAnimationFrame(() => {
+            currentPerformerCard.style.transition = 'transform 0.3s ease-out';
+            currentPerformerCard.style.transform = 'translateX(0)';
+        });
+        
+        if (preloadedPerformers.length > 0) {
+            nextPerformer = preloadedPerformers[0];
+            updatePerformerCard(nextPerformerCard, nextPerformerImage, nextPerformerName, nextPerformerDetails, nextPerformer);
+        }
+    }
+
+    /**
+     * Update a performer card with new data
+     */
+    function updatePerformerCard(card, image, nameEl, detailsEl, performer) {
+        if (!performer) return;
+        
+        card.setAttribute('data-performer-id', performer.id);
+        nameEl.textContent = performer.name || 'Unknown Performer';
+        
+        if (performer.images && performer.images.length > 0) {
+            const imageUrl = performer.images[0];
+            image.src = imageUrl;
+            image.alt = performer.name || 'Performer';
+            
+            if (preloadedImages.has(imageUrl)) {
+                const preloadedImg = preloadedImages.get(imageUrl);
+                updateImageDimensions(image, preloadedImg);
+            } else {
+                image.onload = () => updateImageDimensions(image, image);
+            }
+        } else {
+            image.src = '/assets/images/placeholder-profile.jpg';
+        }
+        
+        const details = [];
+        if (performer.gender) details.push(performer.gender);
+        if (performer.ethnicity) details.push(performer.ethnicity);
+        if (performer.measurements) details.push(performer.measurements);
+        detailsEl.textContent = details.join(' • ') || 'No details available';
+    }
+
+    /**
+     * Update image dimensions based on aspect ratio
+     */
+    function updateImageDimensions(imgEl, loadedImg) {
+        if (loadedImg.height > loadedImg.width) {
+            imgEl.classList.add('max-h-[450px]');
+            imgEl.classList.remove('max-w-full');
+        } else {
+            imgEl.classList.add('max-w-full');
+            imgEl.classList.remove('max-h-[450px]');
+        }
+    }
+
     function updateBlurState() {
-        // Update the toggle button appearance
         if (blurEnabled) {
             blurToggle.classList.add('bg-tertery');
             blurToggle.classList.remove('bg-BgDark');
@@ -191,132 +364,27 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
     
-    /**
-     * Make a choice between performers
-     */
-    async function makeChoice(chosenId, rejectedId) {
-        if (!chosenId || !rejectedId || isProcessingChoice) {
-            console.error('Invalid choice or already processing a choice');
+    function handlePerformersData(data) {
+        if (!data.performers || data.performers.length === 0) {
+            console.error('No performers in the response');
             return;
         }
         
-        try {
-            isProcessingChoice = true;
-            
-            // Store current performers in history to avoid showing again
-            performerHistory.push(chosenId, rejectedId);
-            
-            // Keep history at a reasonable size
-            if (performerHistory.length > 100) {
-                performerHistory = performerHistory.slice(-100);
-            }
-            
-            // Add UI feedback - optional styling to indicate processing
-            const buttons = document.querySelectorAll('.smash-button, #pass-both');
-            buttons.forEach(btn => btn.classList.add('opacity-50'));
-            
-            // Current filter for tracking
-            const currentFilter = { gender: genderFilter.value };
-            
-            // Send choice via WebSocket or AJAX fallback
-            let response;
-            if (window.wsManager) {
-                response = await wsManager.send({
-                    action: 'choice',
-                    chosen_id: chosenId,
-                    rejected_id: rejectedId,
-                    filter: currentFilter
-                });
-            } else {
-                // Direct AJAX fallback if WebSocket manager isn't available
-                const fetchResponse = await fetch('/api/performers.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        action: 'save_choice',
-                        chosen_id: chosenId,
-                        rejected_id: rejectedId,
-                        filter: currentFilter
-                    })
-                });
-                response = await fetchResponse.json();
-            }
-            
-            // Update UI state
-            userChoices++;
-            choiceCount.textContent = userChoices;
-            updateProgressBar();
-            
-            // If we received next batch in response, preload those images
-            if (response && response.next_batch && response.next_batch.length > 0) {
-                console.log('Preloading next batch of performers:', response.next_batch);
-                preloadPerformers(response.next_batch);
-                
-                // If we have preloaded performers, use the next 2 for display
-                if (preloadedPerformers.length >= 2) {
-                    const nextPerformers = preloadedPerformers.splice(0, 2);
-                    displayPerformers({ performers: nextPerformers });
-                    
-                    // If our preloaded cache is running low, fetch more
-                    if (preloadedPerformers.length < 2) {
-                        requestNextBatch();
-                    }
-                    
-                    // Remove UI feedback
-                    buttons.forEach(btn => btn.classList.remove('opacity-50'));
-                    isProcessingChoice = false;
-                    return;
-                }
-            }
-            
-            // If no preloaded performers or next_batch, fetch new performers
-            await fetchPerformers();
-            
-        } catch (error) {
-            console.error('Error making choice:', error);
-            setErrorState('Failed to save your choice. Please try again.');
-        } finally {
-            if (isProcessingChoice) {
-                isProcessingChoice = false;
-                
-                // Remove UI feedback
-                const buttons = document.querySelectorAll('.smash-button, #pass-both');
-                buttons.forEach(btn => btn.classList.remove('opacity-50'));
-            }
+        preloadedPerformers.push(...data.performers);
+        
+        if (!currentPerformer) {
+            showNextPerformer();
         }
-    }
-    
-    /**
-     * Preload performers and their images
-     * @param {Array} performers Array of performer objects to preload
-     */
-    function preloadPerformers(performers) {
-        if (!performers || performers.length === 0) return;
         
-        // Filter out performers we've already seen
-        const newPerformers = performers.filter(p => 
-            !performerHistory.includes(p.id) && 
-            !preloadedPerformers.some(pp => pp.id === p.id)
-        );
-        
-        // Add to preload queue
-        preloadedPerformers.push(...newPerformers);
-        
-        // Preload all images
-        newPerformers.forEach(performer => {
-            if (performer.images && performer.images.length > 0) {
+        data.performers.forEach(performer => {
+            if (performer.images) {
                 performer.images.forEach(imageUrl => {
-                    if (!preloadedImages[imageUrl]) {
-                        preloadedImages[imageUrl] = new Image();
-                        preloadedImages[imageUrl].src = imageUrl;
-                        preloadedImages[imageUrl].onload = () => {
-                            console.log(`Preloaded image: ${imageUrl}`);
-                        };
-                        preloadedImages[imageUrl].onerror = () => {
+                    if (!preloadedImages.has(imageUrl)) {
+                        const img = new Image();
+                        img.src = imageUrl;
+                        img.onload = () => preloadedImages.set(imageUrl, img);
+                        img.onerror = () => {
                             console.error(`Failed to preload image: ${imageUrl}`);
-                            // Use placeholder for failed images
                             performer.images = ['/assets/images/placeholder-profile.jpg'];
                         };
                     }
@@ -325,143 +393,37 @@ document.addEventListener('DOMContentLoaded', async function() {
         });
     }
     
-    /**
-     * Request next batch of performers for preloading
-     */
-    async function requestNextBatch() {
-        try {
-            // Get current gender filter
-            const gender = genderFilter.value;
-            
-            // Request next batch
-            if (window.wsManager) {
-                wsManager.send({
-                    action: 'preload_next_batch',
-                    filter: { gender }
-                }).then(response => {
-                    if (response && response.performers) {
-                        preloadPerformers(response.performers);
-                    }
-                }).catch(error => {
-                    console.error('Error preloading next batch:', error);
-                });
-            } else {
-                // Direct AJAX fallback
-                let url = '/api/performers.php?action=preload_next_batch';
-                if (gender) {
-                    url += `&gender=${encodeURIComponent(gender)}`;
-                }
-                
-                fetch(url)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data && data.performers) {
-                            preloadPerformers(data.performers);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error preloading next batch:', error);
-                    });
-            }
-        } catch (error) {
-            console.error('Error requesting next batch:', error);
-        }
-    }
-    
-    /**
-     * Apply filters to performers
-     */
-    async function applyFilters(filters) {
-        try {
-            // Show loading state
-            setLoadingState(true);
-            
-            if (window.wsManager) {
-                if (wsManager.isWebSocketAvailable()) {
-                    await wsManager.send({
-                        action: 'set_filter',
-                        filter: filters
-                    });
-                } else {
-                    console.log('WebSocket not available, using AJAX fallback');
-                }
-                
-                // Fetch new performers with applied filters
-                await fetchPerformers(filters);
-            } else {
-                // Direct AJAX fallback
-                await fetchPerformers(filters);
-            }
-        } catch (error) {
-            console.error('Error applying filters:', error);
-            setErrorState('Failed to apply filters. Please try again.');
-        } finally {
-            setLoadingState(false);
-        }
-        
-        // Clear preloaded performers when filter changes
-        preloadedPerformers = [];
-    }
-    
-    /**
-     * Fetch random performers
-     */
     async function fetchPerformers(filters = null) {
         try {
-            // Show loading state
             setLoadingState(true);
             
-            // If we have enough preloaded performers, use them instead of fetching
-            if (preloadedPerformers.length >= 2 && !filters) {
-                const nextPerformers = preloadedPerformers.splice(0, 2);
-                displayPerformers({ performers: nextPerformers });
-                
-                // If our preloaded cache is running low, fetch more in background
-                if (preloadedPerformers.length < 4) {
-                    requestNextBatch();
-                }
-                
+            if (preloadedPerformers.length > 0 && !filters) {
+                handlePerformersData({ performers: preloadedPerformers });
                 setLoadingState(false);
                 return;
             }
             
-            // Get current gender filter if not provided
             if (!filters && genderFilter) {
-                const gender = genderFilter.value;
-                filters = { gender };
+                filters = { gender: genderFilter.value };
             }
             
             let response;
-            
-            // Use WebSocket manager to get performers if available
-            if (window.wsManager) {
+            if (window.wsManager && wsManager.isWebSocketAvailable()) {
                 response = await wsManager.send({
                     action: 'random_performers',
                     filter: filters
                 });
             } else {
-                // Direct AJAX fallback
                 let url = '/api/performers.php?action=random_performers';
                 if (filters?.gender) {
                     url += `&gender=${encodeURIComponent(filters.gender)}`;
                 }
-                
-                console.log('Fetching performers from:', url);
                 const fetchResponse = await fetch(url);
                 response = await fetchResponse.json();
             }
             
-            console.log('Received performer data:', response);
-            
-            // Process the response
-            if (response && response.performers && response.performers.length >= 2) {
-                displayPerformers(response);
-                
-                // If there's a next batch, preload those images
-                if (response.next_batch && response.next_batch.length > 0) {
-                    console.log('Preloading next batch of performers:', response.next_batch);
-                    preloadPerformers(response.next_batch);
-                }
+            if (response && response.performers) {
+                handlePerformersData(response);
             } else {
                 console.error('Invalid response data:', response);
                 setErrorState('Could not load performers. Please try again or change your filters.');
@@ -474,137 +436,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
     
-    /**
-     * Display performers without fetching new ones
-     */
-    function displayPerformers(data) {
-        handlePerformersData(data);
-    }
-    
-    /**
-     * Fetch user preferences
-     */
-    async function fetchPreferences() {
-        try {
-            setLoadingState(true);
-            
-            let response;
-            
-            if (window.wsManager) {
-                response = await wsManager.send({
-                    action: 'get_preferences'
-                });
-            } else {
-                // Direct AJAX fallback
-                const fetchResponse = await fetch('/api/performers.php?action=get_preferences');
-                response = await fetchResponse.json();
-            }
-            
-            if (response && response.preferences) {
-                handlePreferencesData(response);
-                
-                // Show results container
-                gameContainer.style.display = 'none';
-                resultsContainer.style.display = 'block';
-                gameActive = false;
-            } else {
-                console.error('Invalid preferences data:', response);
-                setErrorState('Could not load your preferences. Please try again.');
-            }
-        } catch (error) {
-            console.error('Error fetching preferences:', error);
-            setErrorState('Failed to load your preferences. Please try again.');
-        } finally {
-            setLoadingState(false);
-        }
-    }
-    
-    /**
-     * Handle performers data from WebSocket or AJAX
-     */
-    function handlePerformersData(data) {
-        if (!data.performers || data.performers.length < 2) {
-            console.error('Not enough performers in the response');
-            return;
-        }
-        
-        currentPerformers = data.performers;
-        console.log('Displaying performers:', currentPerformers);
-        
-        // Update UI with performer A
-        performerACard.setAttribute('data-performer-id', currentPerformers[0].id);
-        performerAName.textContent = currentPerformers[0].name || 'Unknown Performer';
-        
-        // Set image for performer A
-        if (currentPerformers[0].images && currentPerformers[0].images.length > 0) {
-            const imageUrl = currentPerformers[0].images[0];
-            console.log('Setting image A to:', imageUrl);
-            performerAImage.src = imageUrl;
-            performerAImage.alt = currentPerformers[0].name || 'Performer A';
-            
-            // Pre-load image to get its dimensions
-            const img = new Image();
-            img.onload = function() {
-                // Add appropriate class based on image dimensions
-                if (img.height > img.width) {
-                    performerAImage.classList.add('max-h-96');
-                    performerAImage.classList.remove('max-w-full');
-                } else {
-                    performerAImage.classList.add('max-w-full');
-                    performerAImage.classList.remove('max-h-96');
-                }
-            };
-            img.src = imageUrl;
-        } else {
-            performerAImage.src = '/assets/images/placeholder-profile.jpg';
-        }
-        
-        // Set details for performer A
-        const detailsA = [];
-        if (currentPerformers[0].gender) detailsA.push(currentPerformers[0].gender);
-        if (currentPerformers[0].ethnicity) detailsA.push(currentPerformers[0].ethnicity);
-        if (currentPerformers[0].measurements) detailsA.push(currentPerformers[0].measurements);
-        performerADetails.textContent = detailsA.join(' • ') || 'No details available';
-        
-        // Update UI with performer B
-        performerBCard.setAttribute('data-performer-id', currentPerformers[1].id);
-        performerBName.textContent = currentPerformers[1].name || 'Unknown Performer';
-        
-        // Set image for performer B
-        if (currentPerformers[1].images && currentPerformers[1].images.length > 0) {
-            const imageUrl = currentPerformers[1].images[0];
-            console.log('Setting image B to:', imageUrl);
-            performerBImage.src = imageUrl;
-            performerBImage.alt = currentPerformers[1].name || 'Performer B';
-            
-            // Pre-load image to get its dimensions
-            const img = new Image();
-            img.onload = function() {
-                // Add appropriate class based on image dimensions
-                if (img.height > img.width) {
-                    performerBImage.classList.add('max-h-96');
-                    performerBImage.classList.remove('max-w-full');
-                } else {
-                    performerBImage.classList.add('max-w-full');
-                    performerBImage.classList.remove('max-h-96');
-                }
-            };
-            img.src = imageUrl;
-        } else {
-            performerBImage.src = '/assets/images/placeholder-profile.jpg';
-        }
-        
-        // Set details for performer B
-        const detailsB = [];
-        if (currentPerformers[1].gender) detailsB.push(currentPerformers[1].gender);
-        if (currentPerformers[1].ethnicity) detailsB.push(currentPerformers[1].ethnicity);
-        if (currentPerformers[1].measurements) detailsB.push(currentPerformers[1].measurements);
-        performerBDetails.textContent = detailsB.join(' • ') || 'No details available';
-    }
-    
-    /**
-     * Handle preferences data
-     */
     function handlePreferencesData(data) {
         if (!data.preferences) {
             console.error('No preferences data found');
@@ -613,10 +444,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         
         const preferences = data.preferences;
         
-        // Clear previous preferences data
         preferencesData.innerHTML = '';
         
-        // Add a summary banner of top preferences
         if (userChoices > 5) {
             const summaryDiv = document.createElement('div');
             summaryDiv.className = 'bg-primairy/30 rounded-lg p-4 mb-6 w-full col-span-full text-center';
@@ -642,7 +471,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             preferencesData.appendChild(summaryDiv);
         }
         
-        // Helper function to create preference cards
         const createPreferenceCard = (title, content) => {
             const card = document.createElement('div');
             card.className = 'bg-darkPrimairy rounded-lg p-4 shadow hover:shadow-lg transition-shadow duration-300';
@@ -661,18 +489,15 @@ document.addEventListener('DOMContentLoaded', async function() {
             return card;
         };
         
-        // Process categorical preferences (gender, ethnicity, hair_color, eye_color, cup_size)
         ['gender', 'ethnicity', 'hair_color', 'eye_color', 'cup_size'].forEach(attr => {
             if (preferences[attr] && Object.keys(preferences[attr]).length > 0) {
                 let content = '<ul class="list-disc list-inside">';
                 
-                // Get total count for percentage calculation
                 const total = Object.values(preferences[attr]).reduce((sum, count) => sum + count, 0);
                 
-                // Sort by count (highest first)
                 const sorted = Object.entries(preferences[attr])
                     .sort((a, b) => b[1] - a[1])
-                    .slice(0, 3); // Top 3 preferences
+                    .slice(0, 3);
                 
                 sorted.forEach(([value, count]) => {
                     const percentage = Math.round((count / total) * 100);
@@ -689,19 +514,16 @@ document.addEventListener('DOMContentLoaded', async function() {
                 
                 content += '</ul>';
                 
-                // Format title (capitalize first letter, replace underscores with spaces)
                 const title = attr.charAt(0).toUpperCase() + attr.slice(1).replace('_', ' ');
                 
                 preferencesData.appendChild(createPreferenceCard(title, content));
             }
         });
         
-        // Process numerical preferences (height, weight)
         ['height', 'weight'].forEach(attr => {
             if (preferences[attr]) {
                 const unit = attr === 'height' ? ' cm' : ' kg';
                 
-                // Create a visual representation
                 let content = `
                     <div class="flex flex-col items-center">
                         <div class="text-3xl font-bold mb-2">${preferences[attr]}${unit}</div>
@@ -715,7 +537,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         });
         
-        // Process boolean preferences (fake_boobs)
         if ('fake_boobs' in preferences) {
             const percentage = preferences.fake_boobs;
             let content = `
@@ -745,22 +566,15 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
     
-    /**
-     * Get the top preference from a preference object
-     */
     function getTopPreference(prefObj) {
         if (!prefObj || Object.keys(prefObj).length === 0) return null;
         return Object.entries(prefObj).sort((a, b) => b[1] - a[1])[0][0];
     }
     
-    /**
-     * Create a visual representation of height
-     */
     function createHeightVisualization(height) {
         const heightInCm = parseInt(height);
         if (isNaN(heightInCm)) return '';
         
-        // Scale factor (max height 200cm would be 100px tall)
         const scale = 0.5;
         const visualHeight = heightInCm * scale;
         
@@ -775,58 +589,34 @@ document.addEventListener('DOMContentLoaded', async function() {
         `;
     }
     
-    // Helper functions
-    
-    /**
-     * Update progress bar
-     */
     function updateProgressBar() {
-        // Calculate progress (arbitrary scale - 100 choices = 100%)
         const maxChoices = 100;
         const progress = Math.min(100, (userChoices / maxChoices) * 100);
         progressBar.style.width = `${progress}%`;
     }
     
-    /**
-     * Set loading state
-     */
     function setLoadingState(isLoading) {
         if (isLoading) {
-            // Add loading class to game container
             gameContainer.classList.add('opacity-60');
-            // Disable buttons
             document.querySelectorAll('button').forEach(btn => {
                 btn.disabled = true;
             });
         } else {
-            // Remove loading class
             gameContainer.classList.remove('opacity-60');
-            // Enable buttons
             document.querySelectorAll('button').forEach(btn => {
                 btn.disabled = false;
             });
         }
     }
     
-    /**
-     * Set error state
-     */
     function setErrorState(message) {
-        // Display error message to user
-        // This could be implemented as a toast, alert, or inline message
         console.error('Error:', message);
-        
-        // Simple alert for now - could be replaced with nicer UI
         if (message) {
             alert(message);
         }
     }
     
-    /**
-     * Handle WebSocket errors
-     */
     function handleWebSocketError(error) {
         console.error('WebSocket error:', error);
-        // Most errors will be handled by the WebSocket manager with automatic fallback
     }
 });

@@ -4,19 +4,18 @@ namespace Sander\App\Utils\SmashOrPass;
 
 class DatabaseFunctions {
     private $pdo;
+    private $imageCache = [];
+    private $performerCache = [];
+    private $maxCacheSize = 100;
 
     public function __construct(\PDO $pdo) {
         $this->pdo = $pdo;
     }
 
     /**
-     * Get random performers for Smash or Pass game
-     * @param int $limit Number of performers to fetch
-     * @param array $excludeIds IDs to exclude
-     * @param string $gender Filter by gender (optional)
-     * @return array Array of performer data
+     * Get random performers with optimized query and caching
      */
-    public function getRandomPerformers($limit = 2, $excludeIds = [], $gender = null) {
+    public function getRandomPerformers($limit = 1, $excludeIds = [], $gender = null) {
         $params = [];
         $whereClause = '';
         
@@ -26,45 +25,48 @@ class DatabaseFunctions {
             $params = array_merge($params, $excludeIds);
         }
         
-        // Improve gender filtering with exact match
         if ($gender) {
-            // Convert to lowercase for consistent comparison and strip any whitespace
             $gender = trim(strtolower($gender));
-            
-            // Log the requested gender filter for debugging
-            error_log("Applying gender filter: " . $gender);
-            
-            // Use exact match (BINARY ensures case sensitivity if needed)
             $whereClause .= " AND LOWER(TRIM(gender)) = ?";
             $params[] = $gender;
         }
         
-        $sql = "SELECT id, name, gender, ethnicity, hair_color, eye_color, 
-                       fake_boobs, height, weight, measurements, cup_size
-                FROM performers 
-                WHERE image_amount > 0 $whereClause
-                ORDER BY RAND() 
+        // Optimize random selection for better performance
+        $sql = "SELECT p.id, p.name, p.gender, p.ethnicity, p.hair_color, p.eye_color, 
+                       p.fake_boobs, p.height, p.weight, p.measurements, p.cup_size,
+                       COUNT(pi.id) as image_count
+                FROM performers p
+                LEFT JOIN performer_images pi ON p.id = pi.performer_id
+                WHERE p.image_amount > 0 $whereClause
+                GROUP BY p.id
+                HAVING image_count > 0
+                ORDER BY RAND() * (
+                    CASE 
+                        WHEN p.rating IS NOT NULL THEN p.rating 
+                        ELSE 0.5 
+                    END
+                ) DESC
                 LIMIT ?";
         
         $params[] = $limit;
         
-        // Log the SQL query and parameters for debugging
-        error_log("SQL Query: " . $sql);
-        error_log("Parameters: " . implode(', ', $params));
-        
         try {
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute($params);
+            $performers = $stmt->fetchAll(\PDO::FETCH_ASSOC);
             
-            $results = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-            
-            // Log the number of results returned and their genders
-            error_log("Found " . count($results) . " performers with gender filter: " . $gender);
-            foreach ($results as $index => $performer) {
-                error_log("Result $index: ID={$performer['id']}, Name={$performer['name']}, Gender={$performer['gender']}");
+            // Cache performers and fetch images
+            foreach ($performers as &$performer) {
+                $this->performerCache[$performer['id']] = $performer;
+                $performer['images'] = $this->getPerformerImages($performer['id'], 1);
             }
             
-            return $results;
+            // Maintain cache size
+            if (count($this->performerCache) > $this->maxCacheSize) {
+                $this->performerCache = array_slice($this->performerCache, -$this->maxCacheSize, null, true);
+            }
+            
+            return $performers;
         } catch (\PDOException $e) {
             error_log("Database error in getRandomPerformers: " . $e->getMessage());
             return [];
@@ -72,73 +74,71 @@ class DatabaseFunctions {
     }
     
     /**
-     * Get random images for a performer
-     * @param string $performerId Performer ID
-     * @param int $limit Number of images to fetch
-     * @return array Array of image URLs
+     * Get performer images with caching
      */
     public function getPerformerImages($performerId, $limit = 1) {
+        // Check cache first
+        $cacheKey = "{$performerId}_$limit";
+        if (isset($this->imageCache[$cacheKey])) {
+            return $this->imageCache[$cacheKey];
+        }
+        
         $sql = "SELECT image_url FROM performer_images 
                 WHERE performer_id = ? 
                 ORDER BY RAND() 
                 LIMIT ?";
         
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([$performerId, $limit]);
-        
-        $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-        $imageUrls = array_column($result, 'image_url');
-        
-        // Debug the original URLs
-        error_log("Original URLs for performer $performerId: " . print_r($imageUrls, true));
-        
-        // Fix image URLs to use GitHub CDN
-        foreach ($imageUrls as &$imageUrl) {
-            if (!empty($imageUrl)) {
-                // Extract the relative path part that we need
-                $pattern = '/[\\\\\/]([^\\\\\/]+[\\\\\/][^\\\\\/]+\.[a-zA-Z]+)$/';
-                if (preg_match($pattern, $imageUrl, $matches)) {
-                    $relativePath = str_replace('\\', '/', $matches[1]);
-                    $imageUrl = 'https://cdn.jsdelivr.net/gh/DubblePumper/porn_ai_analyser@main/app/datasets/pornstar_images/' . $relativePath;
-                    error_log("Matched and processed URL: $imageUrl");
+        try {
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([$performerId, $limit]);
+            $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            $imageUrls = array_column($result, 'image_url');
+            
+            // Process and cache image URLs
+            $processedUrls = [];
+            foreach ($imageUrls as $imageUrl) {
+                if (!empty($imageUrl)) {
+                    $pattern = '/[\\\\\/]([^\\\\\/]+[\\\\\/][^\\\\\/]+\.[a-zA-Z]+)$/';
+                    if (preg_match($pattern, $imageUrl, $matches)) {
+                        $relativePath = str_replace('\\', '/', $matches[1]);
+                        $processedUrls[] = 'https://cdn.jsdelivr.net/gh/DubblePumper/porn_ai_analyser@main/app/datasets/pornstar_images/' . $relativePath;
+                    } else {
+                        $processedUrls[] = '/assets/images/placeholder-profile.jpg';
+                    }
                 } else {
-                    // Fallback to the old method if pattern doesn't match
-                    $imageUrl = str_replace('\\', '/', $imageUrl);
-                    $imageUrl = preg_replace('/^.*pornstar_images[\\\\\/]/', '', $imageUrl);
-                    $imageUrl = 'https://cdn.jsdelivr.net/gh/DubblePumper/porn_ai_analyser@main/app/datasets/pornstar_images/' . $imageUrl;
-                    error_log("Fallback processed URL: $imageUrl");
+                    $processedUrls[] = '/assets/images/placeholder-profile.jpg';
                 }
-            } else {
-                $imageUrl = '/assets/images/placeholder-profile.jpg';
-                error_log("Using placeholder for empty URL");
             }
+            
+            // Cache the results
+            $this->imageCache[$cacheKey] = $processedUrls;
+            
+            // Maintain cache size
+            if (count($this->imageCache) > $this->maxCacheSize) {
+                $this->imageCache = array_slice($this->imageCache, -$this->maxCacheSize, null, true);
+            }
+            
+            return $processedUrls;
+        } catch (\PDOException $e) {
+            error_log("Error getting performer images: " . $e->getMessage());
+            return ['/assets/images/placeholder-profile.jpg'];
         }
-        
-        // Log final URLs for debugging
-        error_log("Final URLs: " . print_r($imageUrls, true));
-        
-        return $imageUrls;
     }
     
     /**
-     * Save user choice in Smash or Pass game
-     * @param string $sessionId User session ID
-     * @param string $chosenId ID of chosen performer
-     * @param string $rejectedId ID of rejected performer
-     * @return bool Success status
+     * Save user choice with optimized single-image logic
      */
     public function saveUserChoice($sessionId, $chosenId, $rejectedId) {
         try {
-            // First check if table exists, create if not
             $this->createUserChoicesTableIfNotExists();
             
             $sql = "INSERT INTO user_choices (session_id, chosen_performer_id, rejected_performer_id, choice_time) 
                     VALUES (?, ?, ?, NOW())";
             
             $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([$sessionId, $chosenId, $rejectedId]);
+            $result = $stmt->execute([$sessionId, $chosenId, $rejectedId]);
             
-            return true;
+            return $result;
         } catch (\PDOException $e) {
             error_log("Error saving user choice: " . $e->getMessage());
             return false;
@@ -146,34 +146,52 @@ class DatabaseFunctions {
     }
     
     /**
-     * Get user preference profile based on their choices
-     * @param string $sessionId User session ID
-     * @return array User preference profile
+     * Get user choice count
      */
-    public function getUserPreferenceProfile($sessionId) {
-        // Create choices table if it doesn't exist
-        $this->createUserChoicesTableIfNotExists();
-        
-        // Get all chosen performers
-        $sql = "SELECT p.* 
-                FROM performers p
-                JOIN user_choices uc ON p.id = uc.chosen_performer_id
-                WHERE uc.session_id = ?";
-        
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([$sessionId]);
-        $chosenPerformers = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-        
-        // Calculate preferences
-        $profile = $this->calculatePreferences($chosenPerformers);
-        
-        return $profile;
+    public function getUserChoiceCount($sessionId) {
+        try {
+            $sql = "SELECT COUNT(*) FROM user_choices WHERE session_id = ?";
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([$sessionId]);
+            return (int) $stmt->fetchColumn();
+        } catch (\PDOException $e) {
+            error_log("Error getting user choice count: " . $e->getMessage());
+            return 0;
+        }
     }
     
     /**
-     * Calculate preferences based on chosen performers
-     * @param array $performers Array of chosen performers
-     * @return array Preference profile
+     * Get user preference profile with optimized calculation
+     */
+    public function getUserPreferenceProfile($sessionId) {
+        try {
+            $this->createUserChoicesTableIfNotExists();
+            
+            // Get preferences from chosen performers with weighted scoring
+            $sql = "SELECT p.*, 
+                           CASE 
+                               WHEN uc.chosen_performer_id IS NOT NULL THEN 1 
+                               WHEN uc.rejected_performer_id IS NOT NULL THEN -0.5
+                           END as choice_weight
+                    FROM performers p
+                    JOIN user_choices uc ON (p.id = uc.chosen_performer_id OR p.id = uc.rejected_performer_id)
+                    WHERE uc.session_id = ?
+                    ORDER BY uc.choice_time DESC
+                    LIMIT 50";
+            
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([$sessionId]);
+            $performers = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            
+            return $this->calculatePreferences($performers);
+        } catch (\PDOException $e) {
+            error_log("Error getting user preferences: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Calculate preferences with weighted choices
      */
     private function calculatePreferences($performers) {
         if (empty($performers)) {
@@ -186,57 +204,67 @@ class DatabaseFunctions {
             'hair_color' => [],
             'eye_color' => [],
             'fake_boobs' => 0,
-            'height' => 0,
-            'weight' => 0,
+            'height' => ['sum' => 0, 'count' => 0],
+            'weight' => ['sum' => 0, 'count' => 0],
             'cup_size' => []
         ];
         
-        $count = count($performers);
+        $totalWeight = 0;
         
-        // Count occurrences of each attribute
         foreach ($performers as $performer) {
+            $weight = $performer['choice_weight'];
+            $totalWeight += abs($weight);
+            
             // Process categorical attributes
             foreach (['gender', 'ethnicity', 'hair_color', 'eye_color', 'cup_size'] as $attr) {
                 if (!empty($performer[$attr])) {
-                    if (!isset($profile[$attr][$performer[$attr]])) {
-                        $profile[$attr][$performer[$attr]] = 0;
+                    $value = strtolower(trim($performer[$attr]));
+                    if (!isset($profile[$attr][$value])) {
+                        $profile[$attr][$value] = 0;
                     }
-                    $profile[$attr][$performer[$attr]]++;
+                    $profile[$attr][$value] += $weight;
                 }
             }
             
             // Process boolean attributes
             if (isset($performer['fake_boobs'])) {
-                $profile['fake_boobs'] += (int)$performer['fake_boobs'];
+                $profile['fake_boobs'] += (int)$performer['fake_boobs'] * $weight;
             }
             
-            // Process numerical attributes (height, weight)
+            // Process numerical attributes
             foreach (['height', 'weight'] as $attr) {
                 if (!empty($performer[$attr])) {
-                    // Convert from string (e.g., "170 cm") to number
                     $value = (int)preg_replace('/[^0-9]/', '', $performer[$attr]);
                     if ($value > 0) {
-                        $profile[$attr] += $value;
+                        $profile[$attr]['sum'] += $value * $weight;
+                        $profile[$attr]['count'] += abs($weight);
                     }
                 }
             }
         }
         
-        // Calculate average for numerical attributes
-        foreach (['height', 'weight'] as $attr) {
-            if ($profile[$attr] > 0) {
-                $profile[$attr] = round($profile[$attr] / $count);
-            }
-        }
-        
-        // Calculate percentage for boolean attributes
-        $profile['fake_boobs'] = round(($profile['fake_boobs'] / $count) * 100);
-        
-        // Sort categorical preferences by frequency
+        // Normalize results
         foreach (['gender', 'ethnicity', 'hair_color', 'eye_color', 'cup_size'] as $attr) {
             if (!empty($profile[$attr])) {
                 arsort($profile[$attr]);
+                foreach ($profile[$attr] as &$value) {
+                    $value = max(0, ($value / $totalWeight + 1) / 2 * 100);
+                }
             }
+        }
+        
+        // Calculate averages for numerical attributes
+        foreach (['height', 'weight'] as $attr) {
+            if ($profile[$attr]['count'] > 0) {
+                $profile[$attr] = round($profile[$attr]['sum'] / $profile[$attr]['count']);
+            } else {
+                unset($profile[$attr]);
+            }
+        }
+        
+        // Normalize fake boobs preference to percentage
+        if ($totalWeight > 0) {
+            $profile['fake_boobs'] = max(0, round(($profile['fake_boobs'] / $totalWeight + 1) / 2 * 100));
         }
         
         return $profile;
@@ -258,23 +286,5 @@ class DatabaseFunctions {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
         
         $this->pdo->exec($sql);
-    }
-    
-    /**
-     * Get the number of choices a user has made
-     * 
-     * @param string $sessionId User session ID
-     * @return int Number of choices
-     */
-    public function getUserChoiceCount($sessionId) {
-        try {
-            $sql = "SELECT COUNT(*) FROM user_choices WHERE session_id = ?";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([$sessionId]);
-            return (int) $stmt->fetchColumn();
-        } catch (\PDOException $e) {
-            error_log("Error getting user choice count: " . $e->getMessage());
-            return 0;
-        }
     }
 }

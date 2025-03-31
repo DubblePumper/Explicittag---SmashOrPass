@@ -65,50 +65,58 @@ $pageDescription = "Play Smash or Pass to find your ideal performer based on you
             </div>
         </div>
         
-        <!-- Smash or Pass Game Area -->
+        <!-- Smash or Pass Game Area - Single Performer Display -->
         <div id="game-container" class="mb-10">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <!-- Left Performer (Option A) -->
-                <div id="performer-a" class="performer-card bg-primairy rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition duration-300" data-performer-id="">
+            <!-- Single Performer Card with Swipe Container -->
+            <div id="performer-swipe-container" class="touch-manipulation relative mx-auto max-w-md">
+                <!-- Current Performer Card -->
+                <div id="current-performer" class="performer-card bg-primairy rounded-lg overflow-hidden shadow-lg transform transition-all duration-300" data-performer-id="">
                     <div class="relative flex flex-col items-center bg-darkPrimairy">
-                        <div class="w-full h-96 flex items-center justify-center">
-                            <img id="performer-a-image" src="/assets/images/placeholder-profile.jpg" alt="Performer A" class="max-h-full max-w-full object-contain transition-all duration-300 blur-image group-hover:blur-none">
+                        <div class="w-full h-[450px] flex items-center justify-center">
+                            <img id="performer-image" src="/assets/images/placeholder-profile.jpg" alt="Current Performer" class="max-h-full max-w-full object-contain transition-all duration-300 blur-image">
                         </div>
                         <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-primairy to-transparent p-4">
-                            <h3 id="performer-a-name" class="text-2xl font-bold text-TextWhite">Loading...</h3>
-                            <p id="performer-a-details" class="text-TextWhite opacity-90">Loading performer details...</p>
+                            <h3 id="performer-name" class="text-2xl font-bold text-TextWhite">Loading...</h3>
+                            <p id="performer-details" class="text-TextWhite opacity-90">Loading performer details...</p>
+                        </div>
+                        
+                        <!-- Swipe Indicators (Hidden by default, shown during swipe) -->
+                        <div id="swipe-left-indicator" class="absolute left-4 top-1/2 transform -translate-y-1/2 bg-BgDark/80 text-white px-4 py-2 rounded-full opacity-0 transition-opacity duration-300 pointer-events-none">
+                            <span class="text-xl font-bold">PASS</span>
+                        </div>
+                        <div id="swipe-right-indicator" class="absolute right-4 top-1/2 transform -translate-y-1/2 bg-gradient-to-r from-tertery to-secondary text-white px-4 py-2 rounded-full opacity-0 transition-opacity duration-300 pointer-events-none">
+                            <span class="text-xl font-bold">SMASH</span>
                         </div>
                     </div>
-                    <div class="p-4 flex justify-center">
-                        <button class="smash-button bg-gradient-to-r from-tertery to-secondary text-white px-8 py-3 rounded-full font-bold text-lg hover:opacity-90 transition" data-option="a">
-                            SMASH
+                    
+                    <!-- Action Buttons -->
+                    <div class="p-4 flex justify-between">
+                        <button id="pass-button" class="w-24 h-24 flex items-center justify-center rounded-full bg-BgDark text-TextWhite hover:bg-opacity-80 transition shadow-lg">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                        
+                        <button id="smash-button" class="w-24 h-24 flex items-center justify-center rounded-full bg-gradient-to-r from-tertery to-secondary text-white hover:opacity-90 transition shadow-lg">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                            </svg>
                         </button>
                     </div>
                 </div>
                 
-                <!-- Right Performer (Option B) -->
-                <div id="performer-b" class="performer-card bg-primairy rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition duration-300" data-performer-id="">
+                <!-- Next Performer Card (Hidden, used for animation) -->
+                <div id="next-performer" class="performer-card absolute top-0 left-0 right-0 bg-primairy rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 opacity-0" data-performer-id="">
                     <div class="relative flex flex-col items-center bg-darkPrimairy">
-                        <div class="w-full h-96 flex items-center justify-center">
-                            <img id="performer-b-image" src="/assets/images/placeholder-profile.jpg" alt="Performer B" class="max-h-full max-w-full object-contain transition-all duration-300 blur-image group-hover:blur-none">
+                        <div class="w-full h-[450px] flex items-center justify-center">
+                            <img id="next-performer-image" src="/assets/images/placeholder-profile.jpg" alt="Next Performer" class="max-h-full max-w-full object-contain transition-all duration-300 blur-image">
                         </div>
                         <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-primairy to-transparent p-4">
-                            <h3 id="performer-b-name" class="text-2xl font-bold text-TextWhite">Loading...</h3>
-                            <p id="performer-b-details" class="text-TextWhite opacity-90">Loading performer details...</p>
+                            <h3 id="next-performer-name" class="text-2xl font-bold text-TextWhite">Loading...</h3>
+                            <p id="next-performer-details" class="text-TextWhite opacity-90">Loading performer details...</p>
                         </div>
                     </div>
-                    <div class="p-4 flex justify-center">
-                        <button class="smash-button bg-gradient-to-r from-tertery to-secondary text-white px-8 py-3 rounded-full font-bold text-lg hover:opacity-90 transition" data-option="b">
-                            SMASH
-                        </button>
-                    </div>
                 </div>
-            </div>
-            
-            <div class="mt-8 text-center">
-                <button id="pass-both" class="bg-BgDark text-TextWhite px-6 py-3 rounded-lg hover:bg-opacity-80 transition">
-                    PASS BOTH
-                </button>
             </div>
         </div>
         
